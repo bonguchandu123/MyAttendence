@@ -5,9 +5,8 @@ import Attendance from '../models/Attendance.js';
 import Schedule from '../models/Schedule.js';
 import { asyncHandler } from '../middlewares/errorHandler.js';
 
-// @desc    Get teacher dashboard (today's classes)
-// @route   GET /api/teacher/dashboard
-// @access  Private (Teacher)
+import moment from 'moment-timezone';
+
 export const getDashboard = asyncHandler(async (req, res) => {
   const teacherId = req.user._id;
   const teacher = req.user;
@@ -15,9 +14,12 @@ export const getDashboard = asyncHandler(async (req, res) => {
   // Get today's classes
   const todayClasses = await teacher.getTodayClasses();
 
-  // Format today's classes with status
-  const now = new Date();
-  const currentTime = now.getHours() * 60 + now.getMinutes();
+  // Get current time in IST (India Standard Time)
+  const now = moment().tz('Asia/Kolkata');
+  const currentTime = now.hours() * 60 + now.minutes();
+  
+  console.log('Current IST Time:', now.format('YYYY-MM-DD HH:mm:ss'));
+  console.log('Current Time in Minutes:', currentTime);
 
   const formattedClasses = await Promise.all(
     todayClasses.map(async (schedule) => {
@@ -27,12 +29,19 @@ export const getDashboard = asyncHandler(async (req, res) => {
       const scheduleStart = startHour * 60 + startMin;
       const scheduleEnd = endHour * 60 + endMin;
 
+      console.log(`Class: ${schedule.subject.subjectName}`);
+      console.log(`  Start: ${scheduleStart} mins (${schedule.startTime})`);
+      console.log(`  End: ${scheduleEnd} mins (${schedule.endTime})`);
+      console.log(`  Current: ${currentTime} mins`);
+
       let status = 'upcoming';
       if (currentTime >= scheduleStart && currentTime <= scheduleEnd) {
         status = 'active';
       } else if (currentTime > scheduleEnd) {
         status = 'completed';
       }
+
+      console.log(`  Status: ${status}`);
 
       // Get student count
       const studentCount = await Student.countDocuments({
@@ -61,7 +70,7 @@ export const getDashboard = asyncHandler(async (req, res) => {
 
   // Get tomorrow's classes count
   const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-  const tomorrow = days[(new Date().getDay() + 1) % 7];
+  const tomorrow = days[(now.day() + 1) % 7];
 
   const tomorrowClasses = await Schedule.find({
     teacher: teacherId,
