@@ -229,23 +229,34 @@ export const getStudentsForAttendance = asyncHandler(async (req, res) => {
   }
 
   // Map existing attendance to students
-  const studentsWithStatus = students.map((student) => {
-    const attendance = existingAttendance.find(
-      (att) => att.student.toString() === student._id.toString()
-    );
+const studentsWithStatus = students.map((student) => {
+  const attendance = existingAttendance.find(
+    (att) => att.student.toString() === student._id.toString()
+  );
 
-    return {
-      _id: student._id,
-      rollNumber: student.rollNumber,
-      email: student.email,
-      markedStatus: attendance
-        ? {
-            present: attendance.periods.filter((p) => p.status === 'present').length,
-            absent: attendance.periods.filter((p) => p.status === 'absent').length,
-          }
-        : null,
-    };
-  });
+  // Determine status based on attendance
+  let markedStatus = null;
+  if (attendance && attendance.periods.length > 0) {
+    const presentCount = attendance.periods.filter((p) => p.status === 'present').length;
+    const absentCount = attendance.periods.filter((p) => p.status === 'absent').length;
+    
+    // If all periods are present, mark as "present"
+    // If all periods are absent, mark as "absent"
+    // Otherwise, mark as "present" if at least one period is present
+    if (absentCount === attendance.periods.length) {
+      markedStatus = 'absent';
+    } else if (presentCount > 0) {
+      markedStatus = 'present';
+    }
+  }
+
+  return {
+    _id: student._id,
+    rollNumber: student.rollNumber,
+    email: student.email,
+    markedStatus: markedStatus,  // ✅ Now returns a string: "present", "absent", or null
+  };
+});
 
   res.status(200).json({
     success: true,
