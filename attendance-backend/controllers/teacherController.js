@@ -229,34 +229,34 @@ export const getStudentsForAttendance = asyncHandler(async (req, res) => {
   }
 
   // Map existing attendance to students
-const studentsWithStatus = students.map((student) => {
-  const attendance = existingAttendance.find(
-    (att) => att.student.toString() === student._id.toString()
-  );
+  const studentsWithStatus = students.map((student) => {
+    const attendance = existingAttendance.find(
+      (att) => att.student.toString() === student._id.toString()
+    );
 
-  // Determine status based on attendance
-  let markedStatus = null;
-  if (attendance && attendance.periods.length > 0) {
-    const presentCount = attendance.periods.filter((p) => p.status === 'present').length;
-    const absentCount = attendance.periods.filter((p) => p.status === 'absent').length;
-    
-    // If all periods are present, mark as "present"
-    // If all periods are absent, mark as "absent"
-    // Otherwise, mark as "present" if at least one period is present
-    if (absentCount === attendance.periods.length) {
-      markedStatus = 'absent';
-    } else if (presentCount > 0) {
-      markedStatus = 'present';
+    // Determine status based on attendance
+    let markedStatus = null;
+    if (attendance && attendance.periods.length > 0) {
+      const presentCount = attendance.periods.filter((p) => p.status === 'present').length;
+      const absentCount = attendance.periods.filter((p) => p.status === 'absent').length;
+      
+      // If all periods are present, mark as "present"
+      // If all periods are absent, mark as "absent"
+      // Otherwise, mark as "present" if at least one period is present
+      if (absentCount === attendance.periods.length) {
+        markedStatus = 'absent';
+      } else if (presentCount > 0) {
+        markedStatus = 'present';
+      }
     }
-  }
 
-  return {
-    _id: student._id,
-    rollNumber: student.rollNumber,
-    email: student.email,
-    markedStatus: markedStatus,  // ✅ Now returns a string: "present", "absent", or null
-  };
-});
+    return {
+      _id: student._id,
+      rollNumber: student.rollNumber,
+      email: student.email,
+      markedStatus: markedStatus,  // ✅ Now returns a string: "present", "absent", or null
+    };
+  });
 
   res.status(200).json({
     success: true,
@@ -317,8 +317,13 @@ export const markAttendance = asyncHandler(async (req, res) => {
   const startOfDay = new Date(attendanceDate.setHours(0, 0, 0, 0));
   const endOfDay = new Date(attendanceDate.setHours(23, 59, 59, 999));
 
-  // Check if attendance already marked for this date
-  const existingAttendance = await Attendance.findOne({
+  // FIXED: Check if attendance already marked for ANY of the students on this date
+  // Get all student IDs from the request
+  const studentIds = attendance.map(a => a.studentId);
+  
+  // Check if any of these students already have attendance marked for this date and subject
+  const existingAttendance = await Attendance.find({
+    student: { $in: studentIds },
     subject: schedule.subject._id,
     date: {
       $gte: startOfDay,
@@ -326,7 +331,7 @@ export const markAttendance = asyncHandler(async (req, res) => {
     },
   });
 
-  if (existingAttendance) {
+  if (existingAttendance.length > 0) {
     return res.status(400).json({
       success: false,
       message: 'Attendance already marked for this date',
@@ -371,6 +376,7 @@ export const markAttendance = asyncHandler(async (req, res) => {
     message: 'Attendance marked successfully',
     data: {
       subject: {
+        _id: schedule.subject._id,
         subjectCode: schedule.subject.subjectCode,
         subjectName: schedule.subject.subjectName,
       },
