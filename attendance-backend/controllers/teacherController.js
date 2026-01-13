@@ -1,0 +1,504 @@
+import Teacher from '../models/Teacher.js';
+import Student from '../models/Student.js';
+import Subject from '../models/Subject.js';
+import Attendance from '../models/Attendance.js';
+import Schedule from '../models/Schedule.js';
+import { asyncHandler } from '../middlewares/errorHandler.js';
+
+// @desc    Get teacher dashboard (today's classes)
+// @route   GET /api/teacher/dashboard
+// @access  Private (Teacher)
+export const getDashboard = asyncHandler(async (req, res) => {
+  const teacherId = req.user._id;
+  const teacher = req.user;
+
+  // Get today's classes
+  const todayClasses = await teacher.getTodayClasses();
+
+  // Format today's classes with status
+  const now = new Date();
+  const currentTime = now.getHours() * 60 + now.getMinutes();
+
+  const formattedClasses = await Promise.all(
+    todayClasses.map(async (schedule) => {
+      const [startHour, startMin] = schedule.startTime.split(':').map(Number);
+      const [endHour, endMin] = schedule.endTime.split(':').map(Number);
+
+      const scheduleStart = startHour * 60 + startMin;
+      const scheduleEnd = endHour * 60 + endMin;
+
+      let status = 'upcoming';
+      if (currentTime >= scheduleStart && currentTime <= scheduleEnd) {
+        status = 'active';
+      } else if (currentTime > scheduleEnd) {
+        status = 'completed';
+      }
+
+      // Get student count
+      const studentCount = await Student.countDocuments({
+        branch: schedule.branch,
+        semester: schedule.semester,
+        isActive: true,
+      });
+
+      return {
+        _id: schedule._id,
+        subject: {
+          _id: schedule.subject._id,
+          subjectCode: schedule.subject.subjectCode,
+          subjectName: schedule.subject.subjectName,
+        },
+        branch: schedule.branch,
+        semester: schedule.semester,
+        period: schedule.period,
+        startTime: schedule.startTime,
+        endTime: schedule.endTime,
+        studentCount,
+        status,
+      };
+    })
+  );
+
+  // Get tomorrow's classes count
+  const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const tomorrow = days[(new Date().getDay() + 1) % 7];
+
+  const tomorrowClasses = await Schedule.find({
+    teacher: teacherId,
+    days: tomorrow,
+    isActive: true,
+  });
+
+  res.status(200).json({
+    success: true,
+    data: {
+      teacher: {
+        name: teacher.name,
+        email: teacher.email,
+        department: teacher.department,
+      },
+      todayClasses: formattedClasses,
+      tomorrowClassesCount: tomorrowClasses.length,
+    },
+  });
+});
+
+// @desc    Get all assigned classes
+// @route   GET /api/teacher/classes
+// @access  Private (Teacher)
+export const getAllClasses = asyncHandler(async (req, res) => {
+  const teacherId = req.user._id;
+
+  // Get all schedules for this teacher
+  const schedules = await Schedule.find({
+    teacher: teacherId,
+    isActive: true,
+  }).populate('subject');
+
+  // Get unique assignments
+  const assignmentsMap = new Map();
+
+  for (const schedule of schedules) {
+    const key = `${schedule.subject._id}-${schedule.branch}-${schedule.semester}`;
+
+    if (!assignmentsMap.has(key)) {
+      const studentCount = await Student.countDocuments({
+        branch: schedule.branch,
+        semester: schedule.semester,
+        isActive: true,
+      });
+
+      assignmentsMap.set(key, {
+        _id: schedule._id,
+        subject: {
+          _id: schedule.subject._id,
+          subjectCode: schedule.subject.subjectCode,
+          subjectName: schedule.subject.subjectName,
+        },
+        branch: schedule.branch,
+        semester: schedule.semester,
+        days: schedule.days,
+        period: schedule.period,
+        time: `${schedule.startTime} - ${schedule.endTime}`,
+        studentCount,
+      });
+    } else {
+      // Merge days if same subject-branch-semester
+      const existing = assignmentsMap.get(key);
+      const mergedDays = [...new Set([...existing.days, ...schedule.days])];
+      assignmentsMap.get(key).days = mergedDays;
+    }
+  }
+
+  const assignments = Array.from(assignmentsMap.values());
+
+  res.status(200).json({
+    success: true,
+    count: assignments.length,
+    data: assignments,
+  });
+});
+
+// @desc    Get weekly schedule
+// @route   GET /api/teacher/schedule/weekly
+// @access  Private (Teacher)
+export const getWeeklySchedule = asyncHandler(async (req, res) => {
+  const teacherId = req.user._id;
+
+  const weeklySchedule = await Schedule.getTeacherWeeklySchedule(teacherId);
+
+  // Format the schedule
+  const formattedSchedule = {};
+
+  for (const [day, schedules] of Object.entries(weeklySchedule)) {
+    formattedSchedule[day] = await Promise.all(
+      schedules.map(async (schedule) => {
+        const studentCount = await Student.countDocuments({
+          branch: schedule.branch,
+          semester: schedule.semester,
+          isActive: true,
+        });
+
+        return {
+          _id: schedule._id,
+          time: schedule.startTime,
+          subject: `${schedule.subject.subjectName} - ${schedule.branch} Sem ${schedule.semester}`,
+          subjectCode: schedule.subject.subjectCode,
+          period: schedule.period,
+          studentCount,
+        };
+      })
+    );
+  }
+
+  res.status(200).json({
+    success: true,
+    data: formattedSchedule,
+  });
+});
+
+// @desc    Get students for marking attendance
+// @route   GET /api/teacher/attendance/students/:scheduleId
+// @access  Private (Teacher)
+export const getStudentsForAttendance = asyncHandler(async (req, res) => {
+  const { scheduleId } = req.params;
+  const { date } = req.query;
+
+  // Get schedule
+  const schedule = await Schedule.findById(scheduleId).populate('subject');
+
+  if (!schedule) {
+    return res.status(404).json({
+      success: false,
+      message: 'Schedule not found',
+    });
+  }
+
+  // Get all students for this branch and semester
+  const students = await Student.find({
+    branch: schedule.branch,
+    semester: schedule.semester,
+    isActive: true,
+  })
+    .select('rollNumber email')
+    .sort({ rollNumber: 1 });
+
+  // If date is provided, check if attendance already marked
+  let existingAttendance = [];
+  if (date) {
+    const attendanceDate = new Date(date);
+    const startOfDay = new Date(attendanceDate.setHours(0, 0, 0, 0));
+    const endOfDay = new Date(attendanceDate.setHours(23, 59, 59, 999));
+
+    existingAttendance = await Attendance.find({
+      subject: schedule.subject._id,
+      date: {
+        $gte: startOfDay,
+        $lte: endOfDay,
+      },
+    });
+  }
+
+  // Map existing attendance to students
+  const studentsWithStatus = students.map((student) => {
+    const attendance = existingAttendance.find(
+      (att) => att.student.toString() === student._id.toString()
+    );
+
+    return {
+      _id: student._id,
+      rollNumber: student.rollNumber,
+      email: student.email,
+      markedStatus: attendance
+        ? {
+            present: attendance.periods.filter((p) => p.status === 'present').length,
+            absent: attendance.periods.filter((p) => p.status === 'absent').length,
+          }
+        : null,
+    };
+  });
+
+  res.status(200).json({
+    success: true,
+    data: {
+      schedule: {
+        _id: schedule._id,
+        subject: {
+          _id: schedule.subject._id,
+          subjectCode: schedule.subject.subjectCode,
+          subjectName: schedule.subject.subjectName,
+        },
+        branch: schedule.branch,
+        semester: schedule.semester,
+        period: schedule.period,
+        startTime: schedule.startTime,
+        endTime: schedule.endTime,
+      },
+      students: studentsWithStatus,
+      totalStudents: students.length,
+    },
+  });
+});
+
+// @desc    Mark attendance
+// @route   POST /api/teacher/attendance/mark
+// @access  Private (Teacher)
+export const markAttendance = asyncHandler(async (req, res) => {
+  const teacherId = req.user._id;
+  const { scheduleId, date, periods, attendance } = req.body;
+
+  // Validation
+  if (!scheduleId || !date || !periods || !attendance) {
+    return res.status(400).json({
+      success: false,
+      message: 'Please provide all required fields',
+    });
+  }
+
+  // Get schedule
+  const schedule = await Schedule.findById(scheduleId).populate('subject');
+
+  if (!schedule) {
+    return res.status(404).json({
+      success: false,
+      message: 'Schedule not found',
+    });
+  }
+
+  // Verify teacher owns this schedule
+  if (schedule.teacher.toString() !== teacherId.toString()) {
+    return res.status(403).json({
+      success: false,
+      message: 'Not authorized to mark attendance for this class',
+    });
+  }
+
+  const attendanceDate = new Date(date);
+  const startOfDay = new Date(attendanceDate.setHours(0, 0, 0, 0));
+  const endOfDay = new Date(attendanceDate.setHours(23, 59, 59, 999));
+
+  // Check if attendance already marked for this date
+  const existingAttendance = await Attendance.findOne({
+    subject: schedule.subject._id,
+    date: {
+      $gte: startOfDay,
+      $lte: endOfDay,
+    },
+  });
+
+  if (existingAttendance) {
+    return res.status(400).json({
+      success: false,
+      message: 'Attendance already marked for this date',
+    });
+  }
+
+  // Create attendance records
+  const attendanceRecords = [];
+  let presentCount = 0;
+  let absentCount = 0;
+
+  for (const studentAttendance of attendance) {
+    const { studentId, status } = studentAttendance;
+
+    const periodsData = periods.map((period) => ({
+      periodNumber: period.periodNumber,
+      startTime: period.startTime,
+      endTime: period.endTime,
+      status,
+    }));
+
+    if (status === 'present') {
+      presentCount++;
+    } else {
+      absentCount++;
+    }
+
+    const attendanceRecord = await Attendance.create({
+      student: studentId,
+      subject: schedule.subject._id,
+      teacher: teacherId,
+      date: new Date(date),
+      periods: periodsData,
+      markedBy: teacherId,
+    });
+
+    attendanceRecords.push(attendanceRecord);
+  }
+
+  res.status(201).json({
+    success: true,
+    message: 'Attendance marked successfully',
+    data: {
+      subject: {
+        subjectCode: schedule.subject.subjectCode,
+        subjectName: schedule.subject.subjectName,
+      },
+      class: `${schedule.branch} - Sem ${schedule.semester}`,
+      date: new Date(date),
+      periods: periods.map((p) => p.periodNumber),
+      time: `${periods[0].startTime} - ${periods[periods.length - 1].endTime}`,
+      presentCount,
+      absentCount,
+      totalStudents: attendance.length,
+      classAttendance: Math.round((presentCount / attendance.length) * 100),
+    },
+  });
+});
+
+// @desc    Get attendance reports for a subject
+// @route   GET /api/teacher/reports/:subjectId
+// @access  Private (Teacher)
+export const getAttendanceReports = asyncHandler(async (req, res) => {
+  const { subjectId } = req.params;
+  const { branch, semester } = req.query;
+
+  // Get subject
+  const subject = await Subject.findById(subjectId);
+
+  if (!subject) {
+    return res.status(404).json({
+      success: false,
+      message: 'Subject not found',
+    });
+  }
+
+  // Get all students for this branch and semester
+  const students = await Student.find({
+    branch: branch || subject.branch,
+    semester: semester || subject.semester,
+    isActive: true,
+  }).sort({ rollNumber: 1 });
+
+  // Get attendance for each student
+  const studentReports = await Promise.all(
+    students.map(async (student) => {
+      const attendanceData = await Attendance.getStudentSubjectAttendance(
+        student._id,
+        subjectId
+      );
+
+      let status = 'good';
+      if (attendanceData.percentage >= 90) status = 'excellent';
+      else if (attendanceData.percentage < 75) status = 'warning';
+
+      return {
+        student: {
+          _id: student._id,
+          rollNumber: student.rollNumber,
+          email: student.email,
+        },
+        totalClasses: attendanceData.totalClasses,
+        attendedClasses: attendanceData.attendedClasses,
+        percentage: attendanceData.percentage,
+        status,
+      };
+    })
+  );
+
+  // Calculate overall stats
+  const totalSessions = studentReports[0]?.totalClasses || 0;
+  const totalPossibleAttendance = totalSessions * students.length;
+  const totalActualAttendance = studentReports.reduce(
+    (sum, report) => sum + report.attendedClasses,
+    0
+  );
+
+  const overallPercentage =
+    totalPossibleAttendance > 0
+      ? Math.round((totalActualAttendance / totalPossibleAttendance) * 100)
+      : 0;
+
+  res.status(200).json({
+    success: true,
+    data: {
+      subject: {
+        _id: subject._id,
+        subjectCode: subject.subjectCode,
+        subjectName: subject.subjectName,
+      },
+      class: `${branch || subject.branch} - Sem ${semester || subject.semester}`,
+      overallStats: {
+        overallPercentage,
+        totalSessions,
+        totalStudents: students.length,
+        totalPossibleAttendance,
+        totalActualAttendance,
+      },
+      studentReports,
+    },
+  });
+});
+
+// @desc    Get class-wise attendance for a specific date
+// @route   GET /api/teacher/attendance/class/:subjectId
+// @access  Private (Teacher)
+export const getClassAttendanceByDate = asyncHandler(async (req, res) => {
+  const { subjectId } = req.params;
+  const { date } = req.query;
+
+  if (!date) {
+    return res.status(400).json({
+      success: false,
+      message: 'Please provide a date',
+    });
+  }
+
+  const subject = await Subject.findById(subjectId);
+
+  if (!subject) {
+    return res.status(404).json({
+      success: false,
+      message: 'Subject not found',
+    });
+  }
+
+  const attendanceRecords = await Attendance.getAttendanceByDate(subjectId, date);
+
+  const presentCount = attendanceRecords.filter((record) =>
+    record.periods.some((p) => p.status === 'present')
+  ).length;
+
+  const absentCount = attendanceRecords.filter((record) =>
+    record.periods.every((p) => p.status === 'absent')
+  ).length;
+
+  res.status(200).json({
+    success: true,
+    data: {
+      date,
+      subject: {
+        subjectCode: subject.subjectCode,
+        subjectName: subject.subjectName,
+      },
+      totalStudents: attendanceRecords.length,
+      presentCount,
+      absentCount,
+      percentage:
+        attendanceRecords.length > 0
+          ? Math.round((presentCount / attendanceRecords.length) * 100)
+          : 0,
+      records: attendanceRecords,
+    },
+  });
+});
