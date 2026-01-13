@@ -18,32 +18,32 @@ export const getDashboard = asyncHandler(async (req, res) => {
   });
 
   // Get attendance for each subject
-  const subjectsWithAttendance = await Promise.all(
-    subjects.map(async (subject) => {
-      const attendanceData = await Attendance.getStudentSubjectAttendance(
-        studentId,
-        subject._id
-      );
+const subjectsWithAttendance = await Promise.all(
+  subjects.map(async (subject) => {
+    const attendanceData = await Attendance.getStudentSubjectAttendance(
+      studentId,
+      subject._id
+    );
 
-      return {
-        subjectCode: subject.subjectCode,
-        subjectName: subject.subjectName,
-        totalClasses: attendanceData.totalClasses,
-        attendedClasses: attendanceData.attendedClasses,
-        percentage: attendanceData.percentage,
-        lastClass: attendanceData.records[0]
-          ? {
-              date: attendanceData.records[0].date,
-              day: attendanceData.records[0].day,
-              time: `${attendanceData.records[0].periods[0]?.startTime || ''} - ${
-                attendanceData.records[0].periods[0]?.endTime || ''
-              }`,
-            }
-          : null,
-      };
-    })
-  );
-
+    return {
+      subjectId: subject._id.toString(),  // ADD THIS LINE
+      subjectCode: subject.subjectCode,
+      subjectName: subject.subjectName,
+      totalClasses: attendanceData.totalClasses,
+      attendedClasses: attendanceData.attendedClasses,
+      percentage: attendanceData.percentage,
+      lastClass: attendanceData.records[0]
+        ? {
+            date: attendanceData.records[0].date,
+            day: attendanceData.records[0].day,
+            time: `${attendanceData.records[0].periods[0]?.startTime || ''} - ${
+              attendanceData.records[0].periods[0]?.endTime || ''
+            }`,
+          }
+        : null,
+    };
+  })
+);
   // Calculate overall attendance
   let totalClasses = 0;
   let totalAttended = 0;
@@ -91,35 +91,35 @@ export const getAllSubjects = asyncHandler(async (req, res) => {
   }).sort({ subjectName: 1 });
 
   // Get attendance for each subject
-  const subjectsWithAttendance = await Promise.all(
-    subjects.map(async (subject) => {
-      const attendanceData = await Attendance.getStudentSubjectAttendance(
-        studentId,
-        subject._id
-      );
+const subjectsWithAttendance = await Promise.all(
+  subjects.map(async (subject) => {
+    const attendanceData = await Attendance.getStudentSubjectAttendance(
+      studentId,
+      subject._id
+    );
 
-      return {
-        _id: subject._id,
-        subjectCode: subject.subjectCode,
-        subjectName: subject.subjectName,
-        credits: subject.credits,
-        type: subject.type,
-        totalClasses: attendanceData.totalClasses,
-        attendedClasses: attendanceData.attendedClasses,
-        percentage: attendanceData.percentage,
-        lastClass: attendanceData.records[0]
-          ? {
-              date: attendanceData.records[0].date,
-              day: attendanceData.records[0].day,
-              time: `${attendanceData.records[0].periods[0]?.startTime || ''} - ${
-                attendanceData.records[0].periods[0]?.endTime || ''
-              }`,
-            }
-          : null,
-      };
-    })
-  );
-
+    return {
+      subjectId: subject._id.toString(),  // ADD THIS LINE
+      _id: subject._id,
+      subjectCode: subject.subjectCode,
+      subjectName: subject.subjectName,
+      credits: subject.credits,
+      type: subject.type,
+      totalClasses: attendanceData.totalClasses,
+      attendedClasses: attendanceData.attendedClasses,
+      percentage: attendanceData.percentage,
+      lastClass: attendanceData.records[0]
+        ? {
+            date: attendanceData.records[0].date,
+            day: attendanceData.records[0].day,
+            time: `${attendanceData.records[0].periods[0]?.startTime || ''} - ${
+              attendanceData.records[0].periods[0]?.endTime || ''
+            }`,
+          }
+        : null,
+    };
+  })
+);
   res.status(200).json({
     success: true,
     count: subjectsWithAttendance.length,
