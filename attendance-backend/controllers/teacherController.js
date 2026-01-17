@@ -189,9 +189,103 @@ export const getWeeklySchedule = asyncHandler(async (req, res) => {
 // @desc    Get students for marking attendance
 // @route   GET /api/teacher/attendance/students/:scheduleId
 // @access  Private (Teacher)
+// export const getStudentsForAttendance = asyncHandler(async (req, res) => {
+//   const { scheduleId } = req.params;
+//   const { date } = req.query;
+
+//   // Get schedule
+//   const schedule = await Schedule.findById(scheduleId).populate('subject');
+
+//   if (!schedule) {
+//     return res.status(404).json({
+//       success: false,
+//       message: 'Schedule not found',
+//     });
+//   }
+
+//   // Get all students for this branch and semester
+//   const students = await Student.find({
+//     branch: schedule.branch,
+//     semester: schedule.semester,
+//     isActive: true,
+//   })
+//     .select('rollNumber email')
+//     .sort({ rollNumber: 1 });
+
+//   // If date is provided, check if attendance already marked
+//   let existingAttendance = [];
+//   if (date) {
+//     const attendanceDate = new Date(date);
+//     const startOfDay = new Date(attendanceDate.setHours(0, 0, 0, 0));
+//     const endOfDay = new Date(attendanceDate.setHours(23, 59, 59, 999));
+
+//     existingAttendance = await Attendance.find({
+//       subject: schedule.subject._id,
+//       date: {
+//         $gte: startOfDay,
+//         $lte: endOfDay,
+//       },
+//     });
+//   }
+
+//   // Map existing attendance to students
+//   const studentsWithStatus = students.map((student) => {
+//     const attendance = existingAttendance.find(
+//       (att) => att.student.toString() === student._id.toString()
+//     );
+
+//     // Determine status based on attendance
+//     let markedStatus = null;
+//     if (attendance && attendance.periods.length > 0) {
+//       const presentCount = attendance.periods.filter((p) => p.status === 'present').length;
+//       const absentCount = attendance.periods.filter((p) => p.status === 'absent').length;
+      
+//       // If all periods are present, mark as "present"
+//       // If all periods are absent, mark as "absent"
+//       // Otherwise, mark as "present" if at least one period is present
+//       if (absentCount === attendance.periods.length) {
+//         markedStatus = 'absent';
+//       } else if (presentCount > 0) {
+//         markedStatus = 'present';
+//       }
+//     }
+
+//     return {
+//       _id: student._id,
+//       rollNumber: student.rollNumber,
+//       email: student.email,
+//       markedStatus: markedStatus,  // ✅ Now returns a string: "present", "absent", or null
+//     };
+//   });
+
+//   res.status(200).json({
+//     success: true,
+//     data: {
+//       schedule: {
+//         _id: schedule._id,
+//         subject: {
+//           _id: schedule.subject._id,
+//           subjectCode: schedule.subject.subjectCode,
+//           subjectName: schedule.subject.subjectName,
+//         },
+//         branch: schedule.branch,
+//         semester: schedule.semester,
+//         period: schedule.period,
+//         startTime: schedule.startTime,
+//         endTime: schedule.endTime,
+//       },
+//       students: studentsWithStatus,
+//       totalStudents: students.length,
+//     },
+//   });
+// });
+
+// @desc    Get students for marking attendance
+// @route   GET /api/teacher/attendance/students/:scheduleId
+// @access  Private (Teacher)
 export const getStudentsForAttendance = asyncHandler(async (req, res) => {
   const { scheduleId } = req.params;
-  const { date } = req.query;
+  const { date, periods } = req.query;
 
   // Get schedule
   const schedule = await Schedule.findById(scheduleId).populate('subject');
@@ -212,9 +306,14 @@ export const getStudentsForAttendance = asyncHandler(async (req, res) => {
     .select('rollNumber email')
     .sort({ rollNumber: 1 });
 
-  // If date is provided, check if attendance already marked
+  // If date and periods are provided, check if attendance already marked for those specific periods
   let existingAttendance = [];
-  if (date) {
+  let selectedPeriodNumbers = [];
+  
+  if (date && periods) {
+    // Parse periods (comma-separated string like "1,2,3")
+    selectedPeriodNumbers = periods.split(',').map(p => parseInt(p.trim()));
+    
     const attendanceDate = new Date(date);
     const startOfDay = new Date(attendanceDate.setHours(0, 0, 0, 0));
     const endOfDay = new Date(attendanceDate.setHours(23, 59, 59, 999));
@@ -230,23 +329,41 @@ export const getStudentsForAttendance = asyncHandler(async (req, res) => {
 
   // Map existing attendance to students
   const studentsWithStatus = students.map((student) => {
-    const attendance = existingAttendance.find(
+    const studentAttendance = existingAttendance.find(
       (att) => att.student.toString() === student._id.toString()
     );
 
-    // Determine status based on attendance
     let markedStatus = null;
-    if (attendance && attendance.periods.length > 0) {
-      const presentCount = attendance.periods.filter((p) => p.status === 'present').length;
-      const absentCount = attendance.periods.filter((p) => p.status === 'absent').length;
+    
+    if (studentAttendance && selectedPeriodNumbers.length > 0) {
+      // Check if the student has attendance marked for ANY of the selected periods
+      const hasMarkedPeriods = studentAttendance.periods.some(p => 
+        selectedPeriodNumbers.includes(p.periodNumber)
+      );
       
-      // If all periods are present, mark as "present"
-      // If all periods are absent, mark as "absent"
-      // Otherwise, mark as "present" if at least one period is present
-      if (absentCount === attendance.periods.length) {
-        markedStatus = 'absent';
-      } else if (presentCount > 0) {
-        markedStatus = 'present';
+      if (hasMarkedPeriods) {
+        // Get the status for the selected periods
+        const selectedPeriodsData = studentAttendance.periods.filter(p => 
+          selectedPeriodNumbers.includes(p.periodNumber)
+        );
+        
+        const presentCount = selectedPeriodsData.filter(p => p.status === 'present').length;
+        const absentCount = selectedPeriodsData.filter(p => p.status === 'absent').length;
+        
+        // If all selected periods are present
+        if (presentCount === selectedPeriodsData.length) {
+          markedStatus = 'present';
+        }
+        // If all selected periods are absent
+        else if (absentCount === selectedPeriodsData.length) {
+          markedStatus = 'absent';
+        }
+        // Mixed status - show as present if at least one period is present
+        else if (presentCount > 0) {
+          markedStatus = 'present';
+        } else {
+          markedStatus = 'absent';
+        }
       }
     }
 
@@ -254,7 +371,7 @@ export const getStudentsForAttendance = asyncHandler(async (req, res) => {
       _id: student._id,
       rollNumber: student.rollNumber,
       email: student.email,
-      markedStatus: markedStatus,  // ✅ Now returns a string: "present", "absent", or null
+      markedStatus: markedStatus,
     };
   });
 
@@ -279,6 +396,239 @@ export const getStudentsForAttendance = asyncHandler(async (req, res) => {
     },
   });
 });
+
+// @desc    Mark attendance
+// @route   POST /api/teacher/attendance/mark
+// @access  Private (Teacher)
+// export const markAttendance = asyncHandler(async (req, res) => {
+//   const teacherId = req.user._id;
+//   const { scheduleId, date, periods, attendance } = req.body;
+
+//   // Validation
+//   if (!scheduleId || !date || !periods || !attendance) {
+//     return res.status(400).json({
+//       success: false,
+//       message: 'Please provide all required fields',
+//     });
+//   }
+
+//   // Get schedule
+//   const schedule = await Schedule.findById(scheduleId).populate('subject');
+
+//   if (!schedule) {
+//     return res.status(404).json({
+//       success: false,
+//       message: 'Schedule not found',
+//     });
+//   }
+
+//   // Verify teacher owns this schedule
+//   if (schedule.teacher.toString() !== teacherId.toString()) {
+//     return res.status(403).json({
+//       success: false,
+//       message: 'Not authorized to mark attendance for this class',
+//     });
+//   }
+
+//   const attendanceDate = new Date(date);
+//   const startOfDay = new Date(attendanceDate.setHours(0, 0, 0, 0));
+//   const endOfDay = new Date(attendanceDate.setHours(23, 59, 59, 999));
+
+//   // FIXED: Check if attendance already marked for ANY of the students on this date
+//   // Get all student IDs from the request
+//   const studentIds = attendance.map(a => a.studentId);
+  
+//   // Check if any of these students already have attendance marked for this date and subject
+//   const existingAttendance = await Attendance.find({
+//     student: { $in: studentIds },
+//     subject: schedule.subject._id,
+//     date: {
+//       $gte: startOfDay,
+//       $lte: endOfDay,
+//     },
+//   });
+
+//   if (existingAttendance.length > 0) {
+//     return res.status(400).json({
+//       success: false,
+//       message: 'Attendance already marked for this date',
+//     });
+//   }
+
+//   // Create attendance records
+//   const attendanceRecords = [];
+//   let presentCount = 0;
+//   let absentCount = 0;
+
+//   for (const studentAttendance of attendance) {
+//     const { studentId, status } = studentAttendance;
+
+//     const periodsData = periods.map((period) => ({
+//       periodNumber: period.periodNumber,
+//       startTime: period.startTime,
+//       endTime: period.endTime,
+//       status,
+//     }));
+
+//     if (status === 'present') {
+//       presentCount++;
+//     } else {
+//       absentCount++;
+//     }
+
+//     const attendanceRecord = await Attendance.create({
+//       student: studentId,
+//       subject: schedule.subject._id,
+//       teacher: teacherId,
+//       date: new Date(date),
+//       periods: periodsData,
+//       markedBy: teacherId,
+//     });
+
+//     attendanceRecords.push(attendanceRecord);
+//   }
+
+//   res.status(201).json({
+//     success: true,
+//     message: 'Attendance marked successfully',
+//     data: {
+//       subject: {
+//         _id: schedule.subject._id,
+//         subjectCode: schedule.subject.subjectCode,
+//         subjectName: schedule.subject.subjectName,
+//       },
+//       class: `${schedule.branch} - Sem ${schedule.semester}`,
+//       date: new Date(date),
+//       periods: periods.map((p) => p.periodNumber),
+//       time: `${periods[0].startTime} - ${periods[periods.length - 1].endTime}`,
+//       presentCount,
+//       absentCount,
+//       totalStudents: attendance.length,
+//       classAttendance: Math.round((presentCount / attendance.length) * 100),
+//     },
+//   });
+// });
+// @desc    Mark attendance
+// @route   POST /api/teacher/attendance/mark
+// @access  Private (Teacher)
+// export const markAttendance = asyncHandler(async (req, res) => {
+//   const teacherId = req.user._id;
+//   const { scheduleId, date, periods, attendance } = req.body;
+
+//   // Validation
+//   if (!scheduleId || !date || !periods || !attendance) {
+//     return res.status(400).json({
+//       success: false,
+//       message: 'Please provide all required fields',
+//     });
+//   }
+
+//   // Get schedule
+//   const schedule = await Schedule.findById(scheduleId).populate('subject');
+
+//   if (!schedule) {
+//     return res.status(404).json({
+//       success: false,
+//       message: 'Schedule not found',
+//     });
+//   }
+
+//   // Verify teacher owns this schedule
+//   if (schedule.teacher.toString() !== teacherId.toString()) {
+//     return res.status(403).json({
+//       success: false,
+//       message: 'Not authorized to mark attendance for this class',
+//     });
+//   }
+
+//   const attendanceDate = new Date(date);
+//   const startOfDay = new Date(attendanceDate.setHours(0, 0, 0, 0));
+//   const endOfDay = new Date(attendanceDate.setHours(23, 59, 59, 999));
+
+//   // Get all student IDs from the request
+//   const studentIds = attendance.map(a => a.studentId);
+  
+//   // Extract period numbers from the request
+//   const periodNumbers = periods.map(p => p.periodNumber);
+  
+//   // FIXED: Check if attendance already marked for these specific periods
+//   const existingAttendance = await Attendance.find({
+//     student: { $in: studentIds },
+//     subject: schedule.subject._id,
+//     date: {
+//       $gte: startOfDay,
+//       $lte: endOfDay,
+//     },
+//     'periods.periodNumber': { $in: periodNumbers }
+//   });
+
+//   if (existingAttendance.length > 0) {
+//     // Check if any of the existing records have overlapping periods
+//     const hasOverlap = existingAttendance.some(record => 
+//       record.periods.some(p => periodNumbers.includes(p.periodNumber))
+//     );
+
+//     if (hasOverlap) {
+//       return res.status(400).json({
+//         success: false,
+//         message: `Attendance already marked for period(s) ${periodNumbers.join(', ')} on this date`,
+//       });
+//     }
+//   }
+
+//   // Create attendance records
+//   const attendanceRecords = [];
+//   let presentCount = 0;
+//   let absentCount = 0;
+
+//   for (const studentAttendance of attendance) {
+//     const { studentId, status } = studentAttendance;
+
+//     const periodsData = periods.map((period) => ({
+//       periodNumber: period.periodNumber,
+//       startTime: period.startTime,
+//       endTime: period.endTime,
+//       status,
+//     }));
+
+//     if (status === 'present') {
+//       presentCount++;
+//     } else {
+//       absentCount++;
+//     }
+
+//     const attendanceRecord = await Attendance.create({
+//       student: studentId,
+//       subject: schedule.subject._id,
+//       teacher: teacherId,
+//       date: new Date(date),
+//       periods: periodsData,
+//       markedBy: teacherId,
+//     });
+
+//     attendanceRecords.push(attendanceRecord);
+//   }
+
+//   res.status(201).json({
+//     success: true,
+//     message: 'Attendance marked successfully',
+//     data: {
+//       subject: {
+//         _id: schedule.subject._id,
+//         subjectCode: schedule.subject.subjectCode,
+//         subjectName: schedule.subject.subjectName,
+//       },
+//       class: `${schedule.branch} - Sem ${schedule.semester}`,
+//       date: new Date(date),
+//       periods: periods.map((p) => p.periodNumber),
+//       time: `${periods[0].startTime} - ${periods[periods.length - 1].endTime}`,
+//       presentCount,
+//       absentCount,
+//       totalStudents: attendance.length,
+//       classAttendance: Math.round((presentCount / attendance.length) * 100),
+//     },
+//   });
+// });
 
 // @desc    Mark attendance
 // @route   POST /api/teacher/attendance/mark
@@ -317,25 +667,36 @@ export const markAttendance = asyncHandler(async (req, res) => {
   const startOfDay = new Date(attendanceDate.setHours(0, 0, 0, 0));
   const endOfDay = new Date(attendanceDate.setHours(23, 59, 59, 999));
 
-  // FIXED: Check if attendance already marked for ANY of the students on this date
   // Get all student IDs from the request
   const studentIds = attendance.map(a => a.studentId);
   
-  // Check if any of these students already have attendance marked for this date and subject
+  // Extract period numbers from the request
+  const periodNumbers = periods.map(p => p.periodNumber);
+  
+  // Check if attendance already marked for these specific periods
   const existingAttendance = await Attendance.find({
     student: { $in: studentIds },
     subject: schedule.subject._id,
     date: {
       $gte: startOfDay,
       $lte: endOfDay,
-    },
+    }
   });
 
+  // Check if ANY of the existing records have the exact same periods
   if (existingAttendance.length > 0) {
-    return res.status(400).json({
-      success: false,
-      message: 'Attendance already marked for this date',
+    const hasExactPeriodMatch = existingAttendance.some(record => {
+      const recordPeriods = record.periods.map(p => p.periodNumber);
+      // Check if there's ANY overlap between periods being marked and existing periods
+      return periodNumbers.some(pNum => recordPeriods.includes(pNum));
     });
+
+    if (hasExactPeriodMatch) {
+      return res.status(400).json({
+        success: false,
+        message: `Attendance already marked for one or more of the selected periods on this date`,
+      });
+    }
   }
 
   // Create attendance records
@@ -391,7 +752,6 @@ export const markAttendance = asyncHandler(async (req, res) => {
     },
   });
 });
-
 // @desc    Get attendance reports for a subject
 // @route   GET /api/teacher/reports/:subjectId
 // @access  Private (Teacher)
@@ -525,6 +885,126 @@ export const getClassAttendanceByDate = asyncHandler(async (req, res) => {
           ? Math.round((presentCount / attendanceRecords.length) * 100)
           : 0,
       records: attendanceRecords,
+    },
+  });
+});
+
+// Add to teacherController.js
+
+// @desc    Edit/Update attendance for a specific date and schedule
+// @route   PUT /api/teacher/attendance/edit
+// @access  Private (Teacher)
+export const editAttendance = asyncHandler(async (req, res) => {
+  const teacherId = req.user._id;
+  const { scheduleId, date, periods, attendance } = req.body;
+
+  // Validation
+  if (!scheduleId || !date || !periods || !attendance) {
+    return res.status(400).json({
+      success: false,
+      message: 'Please provide all required fields',
+    });
+  }
+
+  // Get schedule
+  const schedule = await Schedule.findById(scheduleId).populate('subject');
+
+  if (!schedule) {
+    return res.status(404).json({
+      success: false,
+      message: 'Schedule not found',
+    });
+  }
+
+  // Verify teacher owns this schedule
+  if (schedule.teacher.toString() !== teacherId.toString()) {
+    return res.status(403).json({
+      success: false,
+      message: 'Not authorized to edit attendance for this class',
+    });
+  }
+
+  const attendanceDate = new Date(date);
+  const startOfDay = new Date(attendanceDate.setHours(0, 0, 0, 0));
+  const endOfDay = new Date(attendanceDate.setHours(23, 59, 59, 999));
+
+  // Extract period numbers from the request
+  const periodNumbers = periods.map(p => p.periodNumber);
+  
+  // Find existing attendance records for these specific periods
+  const studentIds = attendance.map(a => a.studentId);
+  
+  const existingRecords = await Attendance.find({
+    student: { $in: studentIds },
+    subject: schedule.subject._id,
+    date: {
+      $gte: startOfDay,
+      $lte: endOfDay,
+    },
+    'periods.periodNumber': { $in: periodNumbers }
+  });
+
+  if (existingRecords.length === 0) {
+    return res.status(404).json({
+      success: false,
+      message: 'No attendance records found to edit',
+    });
+  }
+
+  // Update each student's attendance
+  let presentCount = 0;
+  let absentCount = 0;
+
+  for (const studentAttendance of attendance) {
+    const { studentId, status } = studentAttendance;
+
+    // Find the student's existing attendance record
+    const existingRecord = existingRecords.find(
+      record => record.student.toString() === studentId
+    );
+
+    if (existingRecord) {
+      // Update the periods with matching period numbers
+      existingRecord.periods = existingRecord.periods.map(period => {
+        if (periodNumbers.includes(period.periodNumber)) {
+          return {
+            ...period.toObject(),
+            status: status,
+          };
+        }
+        return period;
+      });
+
+      existingRecord.markedAt = new Date(); // Update timestamp
+      existingRecord.markedBy = teacherId;
+      
+      await existingRecord.save();
+
+      if (status === 'present') {
+        presentCount++;
+      } else {
+        absentCount++;
+      }
+    }
+  }
+
+  res.status(200).json({
+    success: true,
+    message: 'Attendance updated successfully',
+    data: {
+      subject: {
+        _id: schedule.subject._id,
+        subjectCode: schedule.subject.subjectCode,
+        subjectName: schedule.subject.subjectName,
+      },
+      class: `${schedule.branch} - Sem ${schedule.semester}`,
+      date: new Date(date),
+      periods: periods.map((p) => p.periodNumber),
+      time: `${periods[0].startTime} - ${periods[periods.length - 1].endTime}`,
+      presentCount,
+      absentCount,
+      totalStudents: attendance.length,
+      classAttendance: Math.round((presentCount / attendance.length) * 100),
     },
   });
 });

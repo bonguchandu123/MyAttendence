@@ -7,6 +7,7 @@ import {
   markAttendance,
   getAttendanceReports,
   getClassAttendanceByDate,
+  editAttendance,
 } from '../controllers/teacherController.js';
 import { protect, authorize, checkTeacherApproval } from '../middlewares/auth.js';
 
@@ -30,6 +31,7 @@ router.get('/schedule/weekly', getWeeklySchedule);
 router.get('/attendance/students/:scheduleId', getStudentsForAttendance);
 router.post('/attendance/mark', markAttendance);
 router.get('/attendance/class/:subjectId', getClassAttendanceByDate);
+router.put('/attendance/edit', editAttendance); 
 
 // Reports
 router.get('/reports/:subjectId', getAttendanceReports);

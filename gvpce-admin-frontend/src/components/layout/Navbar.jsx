@@ -21,7 +21,7 @@ const Navbar = () => {
               <span className="text-white font-bold text-lg">G</span>
             </div>
             <div>
-              <h1 className="text-xl font-bold text-primary-900">GVPCE Admin Panel</h1>
+              <h1 className="text-xl font-bold text-primary-900">Admin Panel</h1>
               <p className="text-xs text-primary-600">Attendance Management System</p>
             </div>
           </div>
