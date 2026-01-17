@@ -84,6 +84,12 @@ export const dashboardAPI = {
   getActivity: (limit = 10) => api.get(`/admin/dashboard/activity?limit=${limit}`),
 };
 
+//  contact form 
+export const contactAPI = {
+  getSubmissons: (params) =>
+    api.get('/contact/submissions', { params }),
+};
+
 // ==================== STUDENTS API ====================
 export const studentsAPI = {
   getAll: (params) => api.get('/admin/students', { params }),

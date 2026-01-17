@@ -4,7 +4,7 @@ import Subject from '../models/Subject.js';
 import Teacher from '../models/Teacher.js';
 import { asyncHandler } from '../middlewares/errorHandler.js';
 
-// @desc    Get all attendance records (Admin)
+// @desc    Get all attendance records (Admin) - OPTIMIZED
 // @route   GET /api/attendance
 // @access  Private (Admin)
 export const getAllAttendance = asyncHandler(async (req, res) => {
@@ -14,6 +14,16 @@ export const getAllAttendance = asyncHandler(async (req, res) => {
 
   if (subject) query.subject = subject;
   if (student) query.student = student;
+
+  // Add branch/semester to query using aggregation match
+  if (branch || semester) {
+    const studentQuery = { isActive: true };
+    if (branch) studentQuery.branch = branch.toUpperCase();
+    if (semester) studentQuery.semester = parseInt(semester);
+    
+    const matchingStudents = await Student.find(studentQuery).select('_id').lean();
+    query.student = { $in: matchingStudents.map(s => s._id) };
+  }
 
   if (date) {
     const attendanceDate = new Date(date);
@@ -26,29 +36,17 @@ export const getAllAttendance = asyncHandler(async (req, res) => {
     .populate('student', 'rollNumber email branch semester')
     .populate('subject', 'subjectCode subjectName')
     .populate('teacher', 'name email')
-    .sort({ date: -1 });
-
-  // Filter by branch/semester if provided
-  let filteredAttendance = attendance;
-  if (branch) {
-    filteredAttendance = filteredAttendance.filter(
-      (att) => att.student.branch === branch.toUpperCase()
-    );
-  }
-  if (semester) {
-    filteredAttendance = filteredAttendance.filter(
-      (att) => att.student.semester === parseInt(semester)
-    );
-  }
+    .sort({ date: -1 })
+    .lean();
 
   res.status(200).json({
     success: true,
-    count: filteredAttendance.length,
-    data: filteredAttendance,
+    count: attendance.length,
+    data: attendance,
   });
 });
 
-// @desc    Get attendance by student
+// @desc    Get attendance by student - OPTIMIZED
 // @route   GET /api/attendance/student/:studentId
 // @access  Private (Admin/Student)
 export const getAttendanceByStudent = asyncHandler(async (req, res) => {
@@ -56,7 +54,7 @@ export const getAttendanceByStudent = asyncHandler(async (req, res) => {
   const { subject } = req.query;
 
   // Check if student exists
-  const student = await Student.findById(studentId);
+  const student = await Student.findById(studentId).select('rollNumber email branch semester').lean();
   if (!student) {
     return res.status(404).json({
       success: false,
@@ -70,7 +68,8 @@ export const getAttendanceByStudent = asyncHandler(async (req, res) => {
   const attendance = await Attendance.find(query)
     .populate('subject', 'subjectCode subjectName')
     .populate('teacher', 'name')
-    .sort({ date: -1 });
+    .sort({ date: -1 })
+    .lean();
 
   res.status(200).json({
     success: true,
@@ -85,7 +84,7 @@ export const getAttendanceByStudent = asyncHandler(async (req, res) => {
   });
 });
 
-// @desc    Get attendance by subject
+// @desc    Get attendance by subject - OPTIMIZED
 // @route   GET /api/attendance/subject/:subjectId
 // @access  Private (Admin/Teacher)
 export const getAttendanceBySubject = asyncHandler(async (req, res) => {
@@ -93,7 +92,7 @@ export const getAttendanceBySubject = asyncHandler(async (req, res) => {
   const { date, student } = req.query;
 
   // Check if subject exists
-  const subject = await Subject.findById(subjectId);
+  const subject = await Subject.findById(subjectId).select('subjectCode subjectName branch semester').lean();
   if (!subject) {
     return res.status(404).json({
       success: false,
@@ -102,7 +101,6 @@ export const getAttendanceBySubject = asyncHandler(async (req, res) => {
   }
 
   let query = { subject: subjectId };
-
   if (student) query.student = student;
 
   if (date) {
@@ -115,7 +113,8 @@ export const getAttendanceBySubject = asyncHandler(async (req, res) => {
   const attendance = await Attendance.find(query)
     .populate('student', 'rollNumber email branch semester')
     .populate('teacher', 'name email')
-    .sort({ date: -1 });
+    .sort({ date: -1 })
+    .lean();
 
   res.status(200).json({
     success: true,
@@ -130,7 +129,7 @@ export const getAttendanceBySubject = asyncHandler(async (req, res) => {
   });
 });
 
-// @desc    Get attendance by date
+// @desc    Get attendance by date - OPTIMIZED
 // @route   GET /api/attendance/date/:date
 // @access  Private (Admin)
 export const getAttendanceByDate = asyncHandler(async (req, res) => {
@@ -147,93 +146,107 @@ export const getAttendanceByDate = asyncHandler(async (req, res) => {
 
   if (subject) query.subject = subject;
 
+  // Add branch/semester to query
+  if (branch || semester) {
+    const studentQuery = { isActive: true };
+    if (branch) studentQuery.branch = branch.toUpperCase();
+    if (semester) studentQuery.semester = parseInt(semester);
+    
+    const matchingStudents = await Student.find(studentQuery).select('_id').lean();
+    query.student = { $in: matchingStudents.map(s => s._id) };
+  }
+
   const attendance = await Attendance.find(query)
     .populate('student', 'rollNumber email branch semester')
     .populate('subject', 'subjectCode subjectName')
     .populate('teacher', 'name email')
-    .sort({ subject: 1 });
-
-  // Filter by branch/semester if provided
-  let filteredAttendance = attendance;
-  if (branch) {
-    filteredAttendance = filteredAttendance.filter(
-      (att) => att.student.branch === branch.toUpperCase()
-    );
-  }
-  if (semester) {
-    filteredAttendance = filteredAttendance.filter(
-      (att) => att.student.semester === parseInt(semester)
-    );
-  }
+    .sort({ subject: 1 })
+    .lean();
 
   res.status(200).json({
     success: true,
-    count: filteredAttendance.length,
+    count: attendance.length,
     date: attendanceDate,
-    data: filteredAttendance,
+    data: attendance,
   });
 });
 
-// @desc    Get attendance statistics
+// @desc    Get attendance statistics - OPTIMIZED
 // @route   GET /api/attendance/stats
 // @access  Private (Admin)
 export const getAttendanceStats = asyncHandler(async (req, res) => {
   const { branch, semester, startDate, endDate } = req.query;
 
-  let query = {};
+  let matchStage = {};
 
   if (startDate && endDate) {
-    query.date = {
+    matchStage.date = {
       $gte: new Date(startDate),
       $lte: new Date(endDate),
     };
   }
 
-  const attendance = await Attendance.find(query).populate(
-    'student',
-    'branch semester'
+  // Build aggregation pipeline
+  const pipeline = [
+    { $match: matchStage },
+  ];
+
+  // Add student filter if branch/semester specified
+  if (branch || semester) {
+    const studentQuery = { isActive: true };
+    if (branch) studentQuery.branch = branch.toUpperCase();
+    if (semester) studentQuery.semester = parseInt(semester);
+    
+    const matchingStudents = await Student.find(studentQuery).select('_id').lean();
+    pipeline[0].$match.student = { $in: matchingStudents.map(s => s._id) };
+  }
+
+  pipeline.push(
+    { $unwind: '$periods' },
+    {
+      $group: {
+        _id: null,
+        totalSessions: { $addToSet: '$_id' },
+        totalClasses: { $sum: 1 },
+        presentCount: {
+          $sum: { $cond: [{ $eq: ['$periods.status', 'present'] }, 1, 0] }
+        },
+        absentCount: {
+          $sum: { $cond: [{ $eq: ['$periods.status', 'absent'] }, 1, 0] }
+        }
+      }
+    },
+    {
+      $project: {
+        totalSessions: { $size: '$totalSessions' },
+        totalClasses: 1,
+        presentCount: 1,
+        absentCount: 1,
+        overallPercentage: {
+          $cond: [
+            { $gt: ['$totalClasses', 0] },
+            { $round: [{ $multiply: [{ $divide: ['$presentCount', '$totalClasses'] }, 100] }, 0] },
+            0
+          ]
+        }
+      }
+    }
   );
 
-  // Filter by branch/semester if provided
-  let filteredAttendance = attendance;
-  if (branch) {
-    filteredAttendance = filteredAttendance.filter(
-      (att) => att.student.branch === branch.toUpperCase()
-    );
-  }
-  if (semester) {
-    filteredAttendance = filteredAttendance.filter(
-      (att) => att.student.semester === parseInt(semester)
-    );
-  }
+  const result = await Attendance.aggregate(pipeline);
 
-  // Calculate statistics
-  let totalClasses = 0;
-  let presentCount = 0;
-  let absentCount = 0;
-
-  filteredAttendance.forEach((record) => {
-    record.periods.forEach((period) => {
-      totalClasses++;
-      if (period.status === 'present') {
-        presentCount++;
-      } else {
-        absentCount++;
-      }
-    });
-  });
-
-  const overallPercentage =
-    totalClasses > 0 ? Math.round((presentCount / totalClasses) * 100) : 0;
+  const stats = result[0] || {
+    totalSessions: 0,
+    totalClasses: 0,
+    presentCount: 0,
+    absentCount: 0,
+    overallPercentage: 0
+  };
 
   res.status(200).json({
     success: true,
     data: {
-      totalSessions: filteredAttendance.length,
-      totalClasses,
-      presentCount,
-      absentCount,
-      overallPercentage,
+      ...stats,
       filters: {
         branch: branch || 'All',
         semester: semester || 'All',
@@ -244,20 +257,18 @@ export const getAttendanceStats = asyncHandler(async (req, res) => {
   });
 });
 
-// @desc    Delete attendance record
+// @desc    Delete attendance record - OPTIMIZED
 // @route   DELETE /api/attendance/:id
 // @access  Private (Admin)
 export const deleteAttendance = asyncHandler(async (req, res) => {
-  const attendance = await Attendance.findById(req.params.id);
+  const result = await Attendance.findByIdAndDelete(req.params.id);
 
-  if (!attendance) {
+  if (!result) {
     return res.status(404).json({
       success: false,
       message: 'Attendance record not found',
     });
   }
-
-  await attendance.deleteOne();
 
   res.status(200).json({
     success: true,
@@ -266,11 +277,21 @@ export const deleteAttendance = asyncHandler(async (req, res) => {
   });
 });
 
-// @desc    Update attendance record
+// @desc    Update attendance record - OPTIMIZED
 // @route   PUT /api/attendance/:id
 // @access  Private (Admin/Teacher)
 export const updateAttendance = asyncHandler(async (req, res) => {
-  let attendance = await Attendance.findById(req.params.id);
+  const { periods } = req.body;
+
+  const attendance = await Attendance.findByIdAndUpdate(
+    req.params.id,
+    { periods },
+    { new: true, runValidators: true }
+  )
+    .populate('student', 'rollNumber email')
+    .populate('subject', 'subjectCode subjectName')
+    .populate('teacher', 'name')
+    .lean();
 
   if (!attendance) {
     return res.status(404).json({
@@ -279,19 +300,6 @@ export const updateAttendance = asyncHandler(async (req, res) => {
     });
   }
 
-  const { periods } = req.body;
-
-  if (periods) {
-    attendance.periods = periods;
-  }
-
-  await attendance.save();
-
-  attendance = await Attendance.findById(req.params.id)
-    .populate('student', 'rollNumber email')
-    .populate('subject', 'subjectCode subjectName')
-    .populate('teacher', 'name');
-
   res.status(200).json({
     success: true,
     message: 'Attendance record updated successfully',
@@ -299,7 +307,7 @@ export const updateAttendance = asyncHandler(async (req, res) => {
   });
 });
 
-// @desc    Get low attendance students
+// @desc    Get low attendance students - HIGHLY OPTIMIZED
 // @route   GET /api/attendance/low-attendance
 // @access  Private (Admin)
 export const getLowAttendanceStudents = asyncHandler(async (req, res) => {
@@ -309,41 +317,93 @@ export const getLowAttendanceStudents = asyncHandler(async (req, res) => {
   if (branch) studentQuery.branch = branch.toUpperCase();
   if (semester) studentQuery.semester = parseInt(semester);
 
-  const students = await Student.find(studentQuery);
+  const students = await Student.find(studentQuery).select('rollNumber email branch semester').lean();
 
-  const lowAttendanceStudents = [];
+  let subjectQuery = { isActive: true };
+  if (branch) subjectQuery.branch = branch.toUpperCase();
+  if (semester) subjectQuery.semester = parseInt(semester);
 
-  for (const student of students) {
-    // Get all subjects for this student
-    const subjects = await Subject.find({
-      branch: student.branch,
-      semester: student.semester,
-      isActive: true,
-    });
+  const subjects = await Subject.find(subjectQuery).select('subjectCode subjectName').lean();
 
-    const studentSubjects = [];
+  // Bulk fetch all attendance data in one query
+  const studentIds = students.map(s => s._id);
+  const subjectIds = subjects.map(s => s._id);
 
-    for (const subject of subjects) {
-      const attendanceData = await Attendance.getStudentSubjectAttendance(
-        student._id,
-        subject._id
-      );
-
-      if (
-        attendanceData.percentage < threshold &&
-        attendanceData.totalClasses > 0
-      ) {
-        studentSubjects.push({
-          subjectCode: subject.subjectCode,
-          subjectName: subject.subjectName,
-          percentage: attendanceData.percentage,
-          totalClasses: attendanceData.totalClasses,
-          attendedClasses: attendanceData.attendedClasses,
-        });
+  const attendanceData = await Attendance.aggregate([
+    {
+      $match: {
+        student: { $in: studentIds },
+        subject: { $in: subjectIds }
+      }
+    },
+    { $unwind: '$periods' },
+    {
+      $group: {
+        _id: {
+          student: '$student',
+          subject: '$subject'
+        },
+        totalClasses: { $sum: 1 },
+        attendedClasses: {
+          $sum: { $cond: [{ $eq: ['$periods.status', 'present'] }, 1, 0] }
+        }
+      }
+    },
+    {
+      $project: {
+        student: '$_id.student',
+        subject: '$_id.subject',
+        totalClasses: 1,
+        attendedClasses: 1,
+        percentage: {
+          $cond: [
+            { $gt: ['$totalClasses', 0] },
+            { $round: [{ $multiply: [{ $divide: ['$attendedClasses', '$totalClasses'] }, 100] }, 2] },
+            0
+          ]
+        }
+      }
+    },
+    {
+      $match: {
+        percentage: { $lt: parseInt(threshold) },
+        totalClasses: { $gt: 0 }
       }
     }
+  ]);
 
-    if (studentSubjects.length > 0) {
+  // Create lookup maps
+  const subjectMap = new Map(subjects.map(s => [s._id.toString(), s]));
+  const studentMap = new Map(students.map(s => [s._id.toString(), s]));
+
+  // Group by student
+  const studentAttendanceMap = new Map();
+
+  attendanceData.forEach(record => {
+    const studentId = record.student.toString();
+    const subjectId = record.subject.toString();
+
+    if (!studentAttendanceMap.has(studentId)) {
+      studentAttendanceMap.set(studentId, []);
+    }
+
+    const subject = subjectMap.get(subjectId);
+    if (subject) {
+      studentAttendanceMap.get(studentId).push({
+        subjectCode: subject.subjectCode,
+        subjectName: subject.subjectName,
+        percentage: record.percentage,
+        totalClasses: record.totalClasses,
+        attendedClasses: record.attendedClasses,
+      });
+    }
+  });
+
+  // Build response
+  const lowAttendanceStudents = [];
+  studentAttendanceMap.forEach((subjects, studentId) => {
+    const student = studentMap.get(studentId);
+    if (student && subjects.length > 0) {
       lowAttendanceStudents.push({
         student: {
           _id: student._id,
@@ -352,10 +412,10 @@ export const getLowAttendanceStudents = asyncHandler(async (req, res) => {
           branch: student.branch,
           semester: student.semester,
         },
-        subjects: studentSubjects,
+        subjects
       });
     }
-  }
+  });
 
   res.status(200).json({
     success: true,
@@ -365,7 +425,7 @@ export const getLowAttendanceStudents = asyncHandler(async (req, res) => {
   });
 });
 
-// @desc    Get attendance summary by branch and semester
+// @desc    Get attendance summary by branch and semester - HIGHLY OPTIMIZED
 // @route   GET /api/attendance/summary
 // @access  Private (Admin)
 export const getAttendanceSummary = asyncHandler(async (req, res) => {
@@ -378,69 +438,102 @@ export const getAttendanceSummary = asyncHandler(async (req, res) => {
     });
   }
 
-  // Get all students
-  const students = await Student.find({
-    branch: branch.toUpperCase(),
-    semester: parseInt(semester),
-    isActive: true,
-  });
+  const [students, subjects] = await Promise.all([
+    Student.find({
+      branch: branch.toUpperCase(),
+      semester: parseInt(semester),
+      isActive: true,
+    }).select('_id').lean(),
+    Subject.find({
+      branch: branch.toUpperCase(),
+      semester: parseInt(semester),
+      isActive: true,
+    }).select('subjectCode subjectName').lean()
+  ]);
 
-  // Get all subjects
-  const subjects = await Subject.find({
-    branch: branch.toUpperCase(),
-    semester: parseInt(semester),
-    isActive: true,
-  });
+  const studentIds = students.map(s => s._id);
+  const subjectIds = subjects.map(s => s._id);
 
-  const summary = {
-    branch: branch.toUpperCase(),
-    semester: parseInt(semester),
-    totalStudents: students.length,
-    totalSubjects: subjects.length,
-    subjectWise: [],
-  };
-
-  for (const subject of subjects) {
-    let totalClasses = 0;
-    let presentCount = 0;
-
-    for (const student of students) {
-      const attendanceData = await Attendance.getStudentSubjectAttendance(
-        student._id,
-        subject._id
-      );
-
-      totalClasses += attendanceData.totalClasses;
-      presentCount += attendanceData.attendedClasses;
+  // Single aggregation to get all subject-wise attendance
+  const attendanceData = await Attendance.aggregate([
+    {
+      $match: {
+        student: { $in: studentIds },
+        subject: { $in: subjectIds }
+      }
+    },
+    { $unwind: '$periods' },
+    {
+      $group: {
+        _id: '$subject',
+        totalClasses: { $sum: 1 },
+        presentCount: {
+          $sum: { $cond: [{ $eq: ['$periods.status', 'present'] }, 1, 0] }
+        }
+      }
+    },
+    {
+      $project: {
+        subject: '$_id',
+        totalClasses: 1,
+        presentCount: 1,
+        percentage: {
+          $cond: [
+            { $gt: ['$totalClasses', 0] },
+            { $round: [{ $multiply: [{ $divide: ['$presentCount', '$totalClasses'] }, 100] }, 0] },
+            0
+          ]
+        }
+      }
     }
+  ]);
 
-    const percentage =
-      totalClasses > 0 ? Math.round((presentCount / totalClasses) * 100) : 0;
+  // Create lookup map
+  const attendanceMap = new Map(
+    attendanceData.map(a => [a.subject.toString(), a])
+  );
 
-    summary.subjectWise.push({
+  const subjectWise = subjects.map(subject => {
+    const data = attendanceMap.get(subject._id.toString()) || {
+      totalClasses: 0,
+      presentCount: 0,
+      percentage: 0
+    };
+
+    return {
       subject: {
         _id: subject._id,
         subjectCode: subject.subjectCode,
         subjectName: subject.subjectName,
       },
-      totalClasses,
-      presentCount,
-      percentage,
-    });
-  }
+      totalClasses: data.totalClasses,
+      presentCount: data.presentCount,
+      percentage: data.percentage,
+    };
+  });
 
   res.status(200).json({
     success: true,
-    data: summary,
+    data: {
+      branch: branch.toUpperCase(),
+      semester: parseInt(semester),
+      totalStudents: students.length,
+      totalSubjects: subjects.length,
+      subjectWise,
+    },
   });
 });
 
+// @desc    Get all attendance records - OPTIMIZED & FIXED
+// @route   GET /api/attendance/records
+// @access  Private (Admin)
 export const getAllAttendanceRecords = asyncHandler(async (req, res) => {
   const { branch, semester, subject, date, page = 1, limit = 50 } = req.query;
 
   let query = {};
 
   if (subject) query.subject = subject;
+  
   if (date) {
     const attendanceDate = new Date(date);
     const startOfDay = new Date(attendanceDate.setHours(0, 0, 0, 0));
@@ -448,35 +541,35 @@ export const getAllAttendanceRecords = asyncHandler(async (req, res) => {
     query.date = { $gte: startOfDay, $lte: endOfDay };
   }
 
-  const attendance = await Attendance.find(query)
-    .populate('student', 'rollNumber email branch semester')
-    .populate('subject', 'subjectCode subjectName branch semester')
-    .populate('teacher', 'name email')
-    .sort({ markedAt: -1 })
-    .limit(limit * 1)
-    .skip((page - 1) * limit);
-
-  // Filter by branch/semester if provided
-  let filteredAttendance = attendance;
-  if (branch) {
-    filteredAttendance = filteredAttendance.filter(
-      (att) => att.subject.branch === branch.toUpperCase()
-    );
-  }
-  if (semester) {
-    filteredAttendance = filteredAttendance.filter(
-      (att) => att.subject.semester === parseInt(semester)
-    );
+  // Add branch/semester filter
+  if (branch || semester) {
+    const subjectQuery = { isActive: true };
+    if (branch) subjectQuery.branch = branch.toUpperCase();
+    if (semester) subjectQuery.semester = parseInt(semester);
+    
+    const matchingSubjects = await Subject.find(subjectQuery).select('_id').lean();
+    query.subject = { $in: matchingSubjects.map(s => s._id) };
   }
 
-  // Count total for pagination
-  const totalQuery = { ...query };
-  const total = await Attendance.countDocuments(totalQuery);
+  const skip = (page - 1) * limit;
 
-  // Group by session (date + subject + teacher)
+  const [attendance, total] = await Promise.all([
+    Attendance.find(query)
+      .populate('student', 'rollNumber email branch semester')
+      .populate('subject', 'subjectCode subjectName branch semester')
+      .populate('teacher', 'name email')
+      .sort({ markedAt: -1 })
+      .limit(parseInt(limit))
+      .skip(skip)
+      .lean(),
+    Attendance.countDocuments(query)
+  ]);
+
+  // Group by session and get total enrolled students
   const groupedSessions = {};
+  const subjectStudentMap = new Map();
 
-  filteredAttendance.forEach((record) => {
+  attendance.forEach((record) => {
     const sessionKey = `${record.date.toISOString().split('T')[0]}-${record.subject._id}-${record.teacher._id}`;
 
     if (!groupedSessions[sessionKey]) {
@@ -501,12 +594,22 @@ export const getAllAttendanceRecords = asyncHandler(async (req, res) => {
         totalStudents: 0,
         presentCount: 0,
         absentCount: 0,
+        markedStudents: 0,
         students: [],
       };
+      
+      // Track subject ID for counting
+      if (!subjectStudentMap.has(record.subject._id.toString())) {
+        subjectStudentMap.set(record.subject._id.toString(), {
+          subjectId: record.subject._id,
+          branch: record.subject.branch,
+          semester: record.subject.semester
+        });
+      }
     }
 
-    groupedSessions[sessionKey].totalStudents++;
-    
+    groupedSessions[sessionKey].markedStudents++;
+
     const hasPresent = record.periods.some(p => p.status === 'present');
     if (hasPresent) {
       groupedSessions[sessionKey].presentCount++;
@@ -524,7 +627,25 @@ export const getAllAttendanceRecords = asyncHandler(async (req, res) => {
     });
   });
 
+  // Get total enrolled students per subject (based on branch/semester)
+  const subjectStudentCounts = new Map();
+  for (const [subjectIdStr, { subjectId, branch, semester }] of subjectStudentMap) {
+    // Get total students enrolled in this branch/semester
+    // This represents all students who SHOULD be taking this subject
+    const totalInBranchSem = await Student.countDocuments({
+      branch,
+      semester,
+      isActive: true
+    });
+    subjectStudentCounts.set(subjectIdStr, totalInBranchSem);
+  }
+
+  // Assign total students to each session based on subject enrollment
   const sessions = Object.values(groupedSessions);
+  sessions.forEach(session => {
+    const subjectIdStr = session.subject._id.toString();
+    session.totalStudents = subjectStudentCounts.get(subjectIdStr) || session.markedStudents;
+  });
 
   res.status(200).json({
     success: true,
@@ -536,7 +657,7 @@ export const getAllAttendanceRecords = asyncHandler(async (req, res) => {
   });
 });
 
-// @desc    Export attendance records to CSV format
+// @desc    Export attendance records to CSV format - OPTIMIZED
 // @route   GET /api/attendance/export/csv
 // @access  Private (Admin)
 export const exportAttendanceCSV = asyncHandler(async (req, res) => {
@@ -556,29 +677,26 @@ export const exportAttendanceCSV = asyncHandler(async (req, res) => {
     };
   }
 
+  // Add branch/semester filter
+  if (branch || semester) {
+    const studentQuery = { isActive: true };
+    if (branch) studentQuery.branch = branch.toUpperCase();
+    if (semester) studentQuery.semester = parseInt(semester);
+    
+    const matchingStudents = await Student.find(studentQuery).select('_id').lean();
+    query.student = { $in: matchingStudents.map(s => s._id) };
+  }
+
   const attendance = await Attendance.find(query)
     .populate('student', 'rollNumber email branch semester')
     .populate('subject', 'subjectCode subjectName branch semester')
     .populate('teacher', 'name email')
-    .sort({ date: -1, subject: 1 });
-
-  // Filter by branch/semester if provided
-  let filteredAttendance = attendance;
-  if (branch) {
-    filteredAttendance = filteredAttendance.filter(
-      (att) => att.student.branch === branch.toUpperCase()
-    );
-  }
-  if (semester) {
-    filteredAttendance = filteredAttendance.filter(
-      (att) => att.student.semester === parseInt(semester)
-    );
-  }
+    .sort({ date: -1, subject: 1 })
+    .lean();
 
   // Generate CSV
   const csvRows = [];
   
-  // Header
   csvRows.push([
     'Date',
     'Day',
@@ -594,8 +712,7 @@ export const exportAttendanceCSV = asyncHandler(async (req, res) => {
     'Marked At'
   ].join(','));
 
-  // Data rows
-  filteredAttendance.forEach((record) => {
+  attendance.forEach((record) => {
     const periods = record.periods.map(p => `P${p.periodNumber}`).join(';');
     const statuses = record.periods.map(p => p.status).join(';');
     
@@ -622,7 +739,7 @@ export const exportAttendanceCSV = asyncHandler(async (req, res) => {
   res.status(200).send(csv);
 });
 
-// @desc    Export attendance summary to CSV
+// @desc    Export attendance summary to CSV - HIGHLY OPTIMIZED
 // @route   GET /api/attendance/export/summary-csv
 // @access  Private (Admin)
 export const exportAttendanceSummaryCSV = asyncHandler(async (req, res) => {
@@ -635,24 +752,61 @@ export const exportAttendanceSummaryCSV = asyncHandler(async (req, res) => {
     });
   }
 
-  // Get all students
-  const students = await Student.find({
-    branch: branch.toUpperCase(),
-    semester: parseInt(semester),
-    isActive: true,
-  }).sort({ rollNumber: 1 });
+  const [students, subjects] = await Promise.all([
+    Student.find({
+      branch: branch.toUpperCase(),
+      semester: parseInt(semester),
+      isActive: true,
+    }).select('rollNumber email').sort({ rollNumber: 1 }).lean(),
+    Subject.find({
+      branch: branch.toUpperCase(),
+      semester: parseInt(semester),
+      isActive: true,
+    }).select('subjectCode subjectName').lean()
+  ]);
 
-  // Get all subjects
-  const subjects = await Subject.find({
-    branch: branch.toUpperCase(),
-    semester: parseInt(semester),
-    isActive: true,
+  const studentIds = students.map(s => s._id);
+  const subjectIds = subjects.map(s => s._id);
+
+  // Fetch all attendance data in one query
+  const attendanceData = await Attendance.aggregate([
+    {
+      $match: {
+        student: { $in: studentIds },
+        subject: { $in: subjectIds }
+      }
+    },
+    { $unwind: '$periods' },
+    {
+      $group: {
+        _id: {
+          student: '$student',
+          subject: '$subject'
+        },
+        totalClasses: { $sum: 1 },
+        attendedClasses: {
+          $sum: { $cond: [{ $eq: ['$periods.status', 'present'] }, 1, 0] }
+        }
+      }
+    }
+  ]);
+
+  // Create lookup map for quick access
+  const attendanceMap = new Map();
+  attendanceData.forEach(record => {
+    const key = `${record._id.student}-${record._id.subject}`;
+    attendanceMap.set(key, {
+      totalClasses: record.totalClasses,
+      attendedClasses: record.attendedClasses,
+      percentage: record.totalClasses > 0 
+        ? Math.round((record.attendedClasses / record.totalClasses) * 100) 
+        : 0
+    });
   });
 
   // Generate CSV
   const csvRows = [];
   
-  // Header
   const header = ['Roll Number', 'Email'];
   subjects.forEach(subject => {
     header.push(`${subject.subjectCode} (%)`, `${subject.subjectCode} (Classes)`);
@@ -660,27 +814,28 @@ export const exportAttendanceSummaryCSV = asyncHandler(async (req, res) => {
   header.push('Overall %');
   csvRows.push(header.join(','));
 
-  // Data rows
-  for (const student of students) {
+  students.forEach(student => {
     const row = [student.rollNumber, student.email];
     
     let totalClasses = 0;
     let totalAttended = 0;
 
-    for (const subject of subjects) {
-      const attendanceData = await Attendance.getStudentSubjectAttendance(
-        student._id,
-        subject._id
-      );
+    subjects.forEach(subject => {
+      const key = `${student._id}-${subject._id}`;
+      const data = attendanceMap.get(key) || {
+        totalClasses: 0,
+        attendedClasses: 0,
+        percentage: 0
+      };
 
       row.push(
-        attendanceData.percentage,
-        `${attendanceData.attendedClasses}/${attendanceData.totalClasses}`
+        data.percentage,
+        `${data.attendedClasses}/${data.totalClasses}`
       );
 
-      totalClasses += attendanceData.totalClasses;
-      totalAttended += attendanceData.attendedClasses;
-    }
+      totalClasses += data.totalClasses;
+      totalAttended += data.attendedClasses;
+    });
 
     const overallPercentage = totalClasses > 0 
       ? Math.round((totalAttended / totalClasses) * 100) 
@@ -688,7 +843,7 @@ export const exportAttendanceSummaryCSV = asyncHandler(async (req, res) => {
     
     row.push(overallPercentage);
     csvRows.push(row.join(','));
-  }
+  });
 
   const csv = csvRows.join('\n');
 
