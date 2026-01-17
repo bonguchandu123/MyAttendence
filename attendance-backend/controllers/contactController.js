@@ -59,7 +59,6 @@ export const getContactSubmissions = asyncHandler(async (req, res) => {
   if (category) query.category = category;
 
   const submissions = await Contact.find(query)
-    .populate('user', 'name email')
     .sort({ createdAt: -1 })
     .limit(Number(limit))
     .skip((Number(page) - 1) * Number(limit));

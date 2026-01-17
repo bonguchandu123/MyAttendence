@@ -12,6 +12,7 @@ import Schedules from './pages/Schedules';
 import Attendance from './pages/Attendance';
 import Reports from './pages/Reports';
 import Loader from './components/common/Loader';
+import ContactSubmissions from './pages/ContactSubmissions';
 
 const PrivateRoute = ({ children }) => {
   const { isAuthenticated, loading } = useAuth();
@@ -69,6 +70,7 @@ function AppRoutes() {
         <Route path="schedules" element={<Schedules />} />
         <Route path="attendance" element={<Attendance />} />
         <Route path="reports" element={<Reports />} />
+        <Route path="contact" element={<ContactSubmissions />} />
       </Route>
       <Route path="*" element={<Navigate to="/dashboard" />} />
     </Routes>

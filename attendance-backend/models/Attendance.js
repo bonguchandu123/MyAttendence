@@ -64,6 +64,10 @@ const attendanceSchema = new mongoose.Schema(
 attendanceSchema.index({ student: 1, subject: 1, date: 1 });
 attendanceSchema.index({ subject: 1, date: 1 });
 attendanceSchema.index({ student: 1, date: 1 });
+attendanceSchema.index({ date: 1, markedAt: -1 });
+attendanceSchema.index({ subject: 1, teacher: 1, date: 1 });
+attendanceSchema.index({ student: 1, subject: 1 });
+
 
 // Auto-populate day from date
 attendanceSchema.pre('save', function (next) {

@@ -22,41 +22,47 @@ const Attendance = () => {
     branch: '',
     semester: '',
   });
-
-  useEffect(() => {
+useEffect(() => {
+  const timer = setTimeout(() => {
     fetchData();
-  }, [filters]);
+  }, 400);
 
-  const fetchData = async () => {
-    setLoading(true);
-    try {
-      const [statsRes, lowAttendanceRes, recordsRes] = await Promise.all([
-        attendanceAPI.getStats({
-          ...(filters.branch && { branch: filters.branch }),
-          ...(filters.semester && { semester: filters.semester }),
-        }),
-        attendanceAPI.getLowAttendance({
-          threshold: 75,
-          ...(filters.branch && { branch: filters.branch }),
-          ...(filters.semester && { semester: filters.semester }),
-        }),
-        attendanceAPI.getRecords({
-          ...(filters.date && { date: filters.date }),
-          ...(filters.branch && { branch: filters.branch }),
-          ...(filters.semester && { semester: filters.semester }),
-        }),
-      ]);
+  return () => clearTimeout(timer);
+}, [filters.branch, filters.semester, filters.date]);
 
-      setStats(statsRes.data.data);
-      setLowAttendance(lowAttendanceRes.data.data);
-      setAttendanceRecords(recordsRes.data.data);
-    } catch (error) {
-      console.error('Error fetching attendance data:', error);
-      alert('Failed to fetch attendance data');
-    } finally {
-      setLoading(false);
-    }
-  };
+const fetchData = async () => {
+  setLoading(true);
+  try {
+    // 🚀 Summary APIs (fast)
+    const [statsRes, lowAttendanceRes] = await Promise.all([
+      attendanceAPI.getStats({
+        ...(filters.branch && { branch: filters.branch }),
+        ...(filters.semester && { semester: filters.semester }),
+      }),
+      attendanceAPI.getLowAttendance({
+        threshold: 75,
+        ...(filters.branch && { branch: filters.branch }),
+        ...(filters.semester && { semester: filters.semester }),
+      }),
+    ]);
+
+    setStats(statsRes.data.data);
+    setLowAttendance(lowAttendanceRes.data.data);
+
+    // 🐢 Records API (heavy)
+    const recordsRes = await attendanceAPI.getRecords({
+      ...(filters.date && { date: filters.date }),
+      ...(filters.branch && { branch: filters.branch }),
+      ...(filters.semester && { semester: filters.semester }),
+    });
+
+    setAttendanceRecords(recordsRes.data.data);
+  } catch (error) {
+    console.error('Error fetching attendance data:', error);
+  } finally {
+    setLoading(false);
+  }
+};
 
   const handleFilterChange = (e) => {
     const { name, value } = e.target;
