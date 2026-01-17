@@ -6,6 +6,9 @@ import { messaging } from '../config/firebase.js';
 // @desc    Update FCM Token
 // @route   PUT /api/fcm/token
 // @access  Private (Student/Teacher/Admin)
+// @desc    Update FCM Token
+// @route   PUT /api/fcm/token
+// @access  Private (Student/Teacher/Admin)
 export const updateFCMToken = async (req, res) => {
   try {
     const { fcmToken } = req.body;
@@ -18,8 +21,8 @@ export const updateFCMToken = async (req, res) => {
     }
 
     let user;
-    const userId = req.user.id;
-    const userRole = req.user.role;
+    const userId = req.user._id;      // Changed from req.user.id
+    const userRole = req.userRole;     // Changed from req.user.role
 
     // Update token based on user role
     if (userRole === 'student') {
@@ -73,8 +76,8 @@ export const updateFCMToken = async (req, res) => {
 export const deleteFCMToken = async (req, res) => {
   try {
     let user;
-    const userId = req.user.id;
-    const userRole = req.user.role;
+    const userId = req.user._id;       // Changed from req.user.id
+    const userRole = req.userRole;      // Changed from req.user.role
 
     // Delete token based on user role
     if (userRole === 'student') {
