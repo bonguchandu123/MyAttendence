@@ -12,6 +12,7 @@ import subjectRoutes from './routes/subjectRoutes.js';
 import attendanceRoutes from './routes/attendanceRoutes.js';
 import scheduleRoutes from './routes/scheduleRoutes.js';
 import adminRoutes from './routes/adminRoutes.js';
+import contactRoutes from './routes/contactRoutes.js';
 
 // Import models for initial setup
 import Admin from './models/Admin.js';
@@ -62,6 +63,7 @@ app.use('/api/subjects', subjectRoutes);
 app.use('/api/attendance', attendanceRoutes);
 app.use('/api/schedules', scheduleRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/contact', contactRoutes);
 
 // Error handling middleware
 app.use(notFound);
