@@ -252,6 +252,9 @@ export const sendNotificationToMultiple = async (req, res) => {
 // @desc    Send notification to topic
 // @route   POST /api/fcm/send-to-topic
 // @access  Private (Admin/Teacher)
+// @desc    Send notification to topic
+// @route   POST /api/fcm/send-to-topic
+// @access  Private (Admin/Teacher)
 export const sendNotificationToTopic = async (req, res) => {
   try {
     const { topic, title, body, data } = req.body;
@@ -263,20 +266,25 @@ export const sendNotificationToTopic = async (req, res) => {
       });
     }
 
+    // Validate and format topic name
+    const formattedTopic = topic.startsWith('/topics/') 
+      ? topic 
+      : `/topics/${topic.replace(/[^a-zA-Z0-9-_.~%]/g, '-')}`;
+
     const message = {
       notification: {
         title,
         body,
       },
       data: data || {},
-      topic,
+      topic: formattedTopic,
     };
 
     const response = await messaging.send(message);
 
     res.status(200).json({
       success: true,
-      message: `Notification sent to topic: ${topic}`,
+      message: `Notification sent to topic: ${formattedTopic}`,
       data: {
         messageId: response,
       },
