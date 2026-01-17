@@ -63,6 +63,11 @@ const teacherSchema = new mongoose.Schema(
         },
       },
     ],
+    // FCM Token for push notifications
+    fcmToken: {
+      type: String,
+      default: null,
+    },
   },
   {
     timestamps: true,

@@ -13,6 +13,7 @@ import attendanceRoutes from './routes/attendanceRoutes.js';
 import scheduleRoutes from './routes/scheduleRoutes.js';
 import adminRoutes from './routes/adminRoutes.js';
 import contactRoutes from './routes/contactRoutes.js';
+import fcmRoutes from './routes/fcmRoutes.js';
 
 // Import models for initial setup
 import Admin from './models/Admin.js';
@@ -63,7 +64,12 @@ app.use('/api/subjects', subjectRoutes);
 app.use('/api/attendance', attendanceRoutes);
 app.use('/api/schedules', scheduleRoutes);
 app.use('/api/admin', adminRoutes);
+
 app.use('/api/contact', contactRoutes);
+
+
+// Add this with your other route declarations
+app.use('/api/fcm', fcmRoutes);
 
 // Error handling middleware
 app.use(notFound);
