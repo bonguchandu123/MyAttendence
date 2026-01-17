@@ -780,3 +780,85 @@ export const editAttendance = asyncHandler(async (req, res) => {
     },
   });
 });
+
+// Add this to teacherController.js
+
+// @desc    Get teacher's attendance history
+// @route   GET /api/teacher/attendance/history
+// @access  Private (Teacher)
+export const getAttendanceHistory = asyncHandler(async (req, res) => {
+  const teacherId = req.user._id;
+
+  // Get all attendance records marked by this teacher
+  const attendanceRecords = await Attendance.find({
+    teacher: teacherId,
+  })
+    .populate('subject', 'subjectCode subjectName')
+    .populate('student', 'branch semester')
+    .sort({ date: -1, createdAt: -1 });
+
+  // Group by unique sessions (date + subject + periods)
+  const sessionsMap = new Map();
+
+  for (const record of attendanceRecords) {
+    // Create a unique key for each session
+    const periodNumbers = record.periods.map(p => p.periodNumber).sort().join(',');
+    const key = `${record.date.toISOString().split('T')[0]}-${record.subject._id}-${periodNumbers}`;
+
+    if (!sessionsMap.has(key)) {
+      // Get student info from the first record to determine class
+      const studentInfo = record.student;
+      
+      sessionsMap.set(key, {
+        id: record._id.toString(),
+        subjectId: record.subject._id,
+        subjectName: record.subject.subjectName,
+        subjectCode: record.subject.subjectCode,
+        className: `${studentInfo.branch} - Sem ${studentInfo.semester}`,
+        date: record.date.toISOString().split('T')[0],
+        periods: record.periods.map(p => p.periodNumber).sort((a, b) => a - b),
+        time: `${record.periods[0].startTime} - ${record.periods[record.periods.length - 1].endTime}`,
+        presentCount: 0,
+        absentCount: 0,
+        totalStudents: 0,
+        records: []
+      });
+    }
+
+    // Add this record to the session
+    const session = sessionsMap.get(key);
+    session.records.push(record);
+    session.totalStudents++;
+
+    // Count present/absent based on the status of periods
+    const presentCount = record.periods.filter(p => p.status === 'present').length;
+    const absentCount = record.periods.filter(p => p.status === 'absent').length;
+
+    if (presentCount > 0) {
+      session.presentCount++;
+    } else if (absentCount === record.periods.length) {
+      session.absentCount++;
+    }
+  }
+
+  // Convert map to array and calculate percentages
+  const sessions = Array.from(sessionsMap.values()).map(session => {
+    const percentage = session.totalStudents > 0
+      ? Math.round((session.presentCount / session.totalStudents) * 100)
+      : 0;
+
+    // Remove the raw records array before sending
+    const { records, ...sessionData } = session;
+
+    return {
+      ...sessionData,
+      percentage
+    };
+  });
+
+  res.status(200).json({
+    success: true,
+    count: sessions.length,
+    data: sessions,
+  });
+});
