@@ -1,8 +1,13 @@
+
+// =====================================================
+// server.js - Updated with Notification Service
+// =====================================================
 import express from 'express';
 import dotenv from 'dotenv';
 import cors from 'cors';
 import connectDB from './config/db.js';
 import { errorHandler, notFound } from './middlewares/errorHandler.js';
+import NotificationService from './services/notificationService.js';  // ✅ ADD THIS
 
 // Import routes
 import authRoutes from './routes/authRoutes.js';
@@ -52,7 +57,23 @@ app.get('/', (req, res) => {
       attendance: '/api/attendance',
       schedules: '/api/schedules',
       admin: '/api/admin',
+      contact: '/api/contact',
+      fcm: '/api/fcm',
     },
+  });
+});
+
+// Health check route
+app.get('/health', (req, res) => {
+  res.status(200).json({
+    success: true,
+    message: 'Server is healthy',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    services: {
+      database: 'Connected',
+      notifications: 'Active',
+    }
   });
 });
 
@@ -64,11 +85,7 @@ app.use('/api/subjects', subjectRoutes);
 app.use('/api/attendance', attendanceRoutes);
 app.use('/api/schedules', scheduleRoutes);
 app.use('/api/admin', adminRoutes);
-
 app.use('/api/contact', contactRoutes);
-
-
-// Add this with your other route declarations
 app.use('/api/fcm', fcmRoutes);
 
 // Error handling middleware
@@ -80,11 +97,13 @@ const PORT = process.env.PORT || 5000;
 
 // Start server
 const server = app.listen(PORT, async () => {
-  console.log('='.repeat(50));
-  console.log(`🚀 Server running in ${process.env.NODE_ENV} mode`);
-  console.log(`📡 Server URL: http://localhost:${PORT}`);
+  console.log('\n' + '='.repeat(60));
+  console.log('🚀 GVPCE ATTENDANCE MANAGEMENT SYSTEM');
+  console.log('='.repeat(60));
+  console.log(`📡 Server running in ${process.env.NODE_ENV || 'development'} mode`);
+  console.log(`🌐 Server URL: http://localhost:${PORT}`);
   console.log(`⏰ Started at: ${new Date().toLocaleString()}`);
-  console.log('='.repeat(50));
+  console.log('='.repeat(60));
 
   // Create default admin if not exists
   try {
@@ -97,36 +116,65 @@ const server = app.listen(PORT, async () => {
         email: process.env.ADMIN_EMAIL || 'admin@gvpce.ac.in',
         password: process.env.ADMIN_PASSWORD || 'admin123',
       });
-      console.log('✅ Default admin created successfully');
-      console.log(`📧 Email: ${process.env.ADMIN_EMAIL || 'admin@gvpce.ac.in'}`);
-      console.log(`🔑 Password: ${process.env.ADMIN_PASSWORD || 'admin123'}`);
-      console.log('⚠️  Please change the default password after first login!');
-      console.log('='.repeat(50));
+      console.log('\n✅ Default Admin Created Successfully');
+      console.log('📧 Email:', process.env.ADMIN_EMAIL || 'admin@gvpce.ac.in');
+      console.log('🔑 Password:', process.env.ADMIN_PASSWORD || 'admin123');
+      console.log('⚠️  IMPORTANT: Change the default password after first login!');
+      console.log('='.repeat(60));
     }
   } catch (error) {
-    console.error('❌ Error creating default admin:', error.message);
+    console.error('\n❌ Error creating default admin:', error.message);
+  }
+
+  // ✅ Initialize Notification Service
+  console.log('\n📱 Initializing Notification Service...');
+  console.log('-'.repeat(60));
+  try {
+    NotificationService.initializeScheduledJobs();
+    console.log('✅ Notification Service Initialized Successfully');
+    console.log('   📅 Daily Reminders: 7:30 AM (Mon-Fri)');
+    console.log('   🔍 Low Attendance Check: 8:00 PM (Daily)');
+    console.log('   📊 Weekly Summary: 7:00 PM (Sundays)');
+    console.log('='.repeat(60) + '\n');
+  } catch (error) {
+    console.error('❌ Error initializing notification service:', error.message);
   }
 });
 
 // Handle unhandled promise rejections
 process.on('unhandledRejection', (err) => {
-  console.error(`❌ Unhandled Rejection: ${err.message}`);
+  console.error(`\n❌ Unhandled Rejection: ${err.message}`);
+  console.error('Stack:', err.stack);
   // Close server & exit process
-  server.close(() => process.exit(1));
+  server.close(() => {
+    console.log('🔴 Server closed due to unhandled rejection');
+    process.exit(1);
+  });
 });
 
 // Handle uncaught exceptions
 process.on('uncaughtException', (err) => {
-  console.error(`❌ Uncaught Exception: ${err.message}`);
+  console.error(`\n❌ Uncaught Exception: ${err.message}`);
+  console.error('Stack:', err.stack);
   // Close server & exit process
-  server.close(() => process.exit(1));
+  server.close(() => {
+    console.log('🔴 Server closed due to uncaught exception');
+    process.exit(1);
+  });
 });
 
 // Graceful shutdown
 process.on('SIGTERM', () => {
-  console.log('👋 SIGTERM received. Shutting down gracefully...');
+  console.log('\n👋 SIGTERM received. Shutting down gracefully...');
   server.close(() => {
-    console.log('✅ Process terminated!');
+    console.log('✅ Server closed. Process terminated!');
+  });
+});
+
+process.on('SIGINT', () => {
+  console.log('\n👋 SIGINT received. Shutting down gracefully...');
+  server.close(() => {
+    console.log('✅ Server closed. Process terminated!');
   });
 });
 
