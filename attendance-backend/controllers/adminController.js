@@ -5,12 +5,8 @@ import Subject from '../models/Subject.js';
 import Attendance from '../models/Attendance.js';
 import Schedule from '../models/Schedule.js';
 import { asyncHandler } from '../middlewares/errorHandler.js';
+import bcrypt from 'bcryptjs';
 
-// ==================== STUDENT MANAGEMENT ====================
-
-// @desc    Get all students (OPTIMIZED)
-// @route   GET /api/admin/students
-// @access  Private (Admin)
 export const getAllStudents = asyncHandler(async (req, res) => {
   const { branch, semester, search, page = 1, limit = 50 } = req.query;
 
@@ -46,9 +42,6 @@ export const getAllStudents = asyncHandler(async (req, res) => {
   });
 });
 
-// @desc    Get single student (OPTIMIZED)
-// @route   GET /api/admin/students/:id
-// @access  Private (Admin)
 export const getStudentById = asyncHandler(async (req, res) => {
   const student = await Student.findById(req.params.id).select('-password').lean();
 
@@ -59,7 +52,6 @@ export const getStudentById = asyncHandler(async (req, res) => {
     });
   }
 
-  // Optimized attendance calculation using aggregation
   const attendanceData = await Attendance.aggregate([
     { $match: { student: req.params.id } },
     { $unwind: '$periods' },
@@ -87,9 +79,6 @@ export const getStudentById = asyncHandler(async (req, res) => {
   });
 });
 
-// @desc    Create new student (OPTIMIZED)
-// @route   POST /api/admin/students
-// @access  Private (Admin)
 export const createStudent = asyncHandler(async (req, res) => {
   const { rollNumber, branch, semester, password } = req.body;
 
@@ -113,7 +102,7 @@ export const createStudent = asyncHandler(async (req, res) => {
 
   const email = `${rollNumber.toLowerCase()}@gvpce.ac.in`;
 
-  const student = await Student.create({
+  const student = new Student({
     rollNumber: rollNumber.toUpperCase(),
     email,
     password: password || rollNumber,
@@ -121,6 +110,7 @@ export const createStudent = asyncHandler(async (req, res) => {
     semester: parseInt(semester),
   });
 
+  await student.save();
   student.password = undefined;
 
   res.status(201).json({
@@ -130,9 +120,6 @@ export const createStudent = asyncHandler(async (req, res) => {
   });
 });
 
-// @desc    Bulk create students (HIGHLY OPTIMIZED)
-// @route   POST /api/admin/students/bulk
-// @access  Private (Admin)
 export const bulkCreateStudents = asyncHandler(async (req, res) => {
   const { students } = req.body;
 
@@ -145,7 +132,6 @@ export const bulkCreateStudents = asyncHandler(async (req, res) => {
 
   const rollNumbers = students.map(s => s.rollNumber.toUpperCase());
 
-  // Bulk check for existing students
   const existing = await Student.find({
     rollNumber: { $in: rollNumbers },
   }).select('rollNumber').lean();
@@ -167,17 +153,20 @@ export const bulkCreateStudents = asyncHandler(async (req, res) => {
     }
 
     const email = `${rn.toLowerCase()}@gvpce.ac.in`;
+    const plainPassword = studentData.password || rn;
+    
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(plainPassword, salt);
 
     toInsert.push({
       rollNumber: rn,
       email,
-      password: studentData.password || rn,
+      password: hashedPassword,
       branch: studentData.branch.toUpperCase(),
       semester: parseInt(studentData.semester),
     });
   }
 
-  // Bulk insert with unordered for better performance
   const created = toInsert.length
     ? await Student.insertMany(toInsert, { ordered: false })
     : [];
@@ -199,9 +188,6 @@ export const bulkCreateStudents = asyncHandler(async (req, res) => {
   });
 });
 
-// @desc    Update student (OPTIMIZED)
-// @route   PUT /api/admin/students/:id
-// @access  Private (Admin)
 export const updateStudent = asyncHandler(async (req, res) => {
   const student = await Student.findById(req.params.id);
 
@@ -212,7 +198,7 @@ export const updateStudent = asyncHandler(async (req, res) => {
     });
   }
 
-  const { rollNumber, branch, semester } = req.body;
+  const { rollNumber, branch, semester, password } = req.body;
 
   if (rollNumber && rollNumber !== student.rollNumber) {
     const existingStudent = await Student.findOne({
@@ -232,6 +218,7 @@ export const updateStudent = asyncHandler(async (req, res) => {
 
   if (branch) student.branch = branch.toUpperCase();
   if (semester) student.semester = parseInt(semester);
+  if (password) student.password = password;
 
   await student.save();
   student.password = undefined;
@@ -243,9 +230,6 @@ export const updateStudent = asyncHandler(async (req, res) => {
   });
 });
 
-// @desc    Delete student (OPTIMIZED)
-// @route   DELETE /api/admin/students/:id
-// @access  Private (Admin)
 export const deleteStudent = asyncHandler(async (req, res) => {
   const student = await Student.findByIdAndUpdate(
     req.params.id,
@@ -267,9 +251,6 @@ export const deleteStudent = asyncHandler(async (req, res) => {
   });
 });
 
-// @desc    Bulk update semester (promotion) (OPTIMIZED)
-// @route   PUT /api/admin/students/bulk/promote
-// @access  Private (Admin)
 export const bulkPromoteStudents = asyncHandler(async (req, res) => {
   const { branch, currentSemester, newSemester } = req.body;
 
@@ -303,11 +284,6 @@ export const bulkPromoteStudents = asyncHandler(async (req, res) => {
   });
 });
 
-// ==================== TEACHER MANAGEMENT ====================
-
-// @desc    Get all teachers (OPTIMIZED)
-// @route   GET /api/admin/teachers
-// @access  Private (Admin)
 export const getAllTeachers = asyncHandler(async (req, res) => {
   const { department, isApproved, search } = req.query;
 
@@ -335,9 +311,6 @@ export const getAllTeachers = asyncHandler(async (req, res) => {
   });
 });
 
-// @desc    Get pending teacher approvals (OPTIMIZED)
-// @route   GET /api/admin/teachers/pending
-// @access  Private (Admin)
 export const getPendingTeachers = asyncHandler(async (req, res) => {
   const teachers = await Teacher.find({
     isApproved: false,
@@ -354,9 +327,6 @@ export const getPendingTeachers = asyncHandler(async (req, res) => {
   });
 });
 
-// @desc    Approve teacher (OPTIMIZED)
-// @route   PUT /api/admin/teachers/:id/approve
-// @access  Private (Admin)
 export const approveTeacher = asyncHandler(async (req, res) => {
   const teacher = await Teacher.findById(req.params.id);
 
@@ -385,9 +355,6 @@ export const approveTeacher = asyncHandler(async (req, res) => {
   });
 });
 
-// @desc    Reject teacher (OPTIMIZED)
-// @route   PUT /api/admin/teachers/:id/reject
-// @access  Private (Admin)
 export const rejectTeacher = asyncHandler(async (req, res) => {
   const teacher = await Teacher.findByIdAndUpdate(
     req.params.id,
@@ -409,9 +376,6 @@ export const rejectTeacher = asyncHandler(async (req, res) => {
   });
 });
 
-// @desc    Update teacher (OPTIMIZED)
-// @route   PUT /api/admin/teachers/:id
-// @access  Private (Admin)
 export const updateTeacher = asyncHandler(async (req, res) => {
   const teacher = await Teacher.findById(req.params.id);
 
@@ -439,9 +403,6 @@ export const updateTeacher = asyncHandler(async (req, res) => {
   });
 });
 
-// @desc    Delete teacher (deactivate) (OPTIMIZED)
-// @route   DELETE /api/admin/teachers/:id
-// @access  Private (Admin)
 export const deleteTeacher = asyncHandler(async (req, res) => {
   const teacher = await Teacher.findByIdAndUpdate(
     req.params.id,
@@ -463,9 +424,6 @@ export const deleteTeacher = asyncHandler(async (req, res) => {
   });
 });
 
-// @desc    Assign subject to teacher (OPTIMIZED)
-// @route   POST /api/admin/teachers/:id/assignments
-// @access  Private (Admin)
 export const assignSubjectToTeacher = asyncHandler(async (req, res) => {
   const teacher = await Teacher.findById(req.params.id);
 
@@ -485,7 +443,6 @@ export const assignSubjectToTeacher = asyncHandler(async (req, res) => {
     });
   }
 
-  // Check if subject exists
   const subjectExists = await Subject.findById(subject).select('_id').lean();
   if (!subjectExists) {
     return res.status(404).json({
@@ -494,7 +451,6 @@ export const assignSubjectToTeacher = asyncHandler(async (req, res) => {
     });
   }
 
-  // Check if assignment already exists
   const hasAssignment = teacher.assignments.some(
     (assignment) =>
       assignment.subject.toString() === subject.toString() &&
@@ -529,9 +485,6 @@ export const assignSubjectToTeacher = asyncHandler(async (req, res) => {
   });
 });
 
-// @desc    Remove assignment from teacher (OPTIMIZED)
-// @route   DELETE /api/admin/teachers/:teacherId/assignments/:assignmentId
-// @access  Private (Admin)
 export const removeAssignmentFromTeacher = asyncHandler(async (req, res) => {
   const { teacherId, assignmentId } = req.params;
 
@@ -562,11 +515,6 @@ export const removeAssignmentFromTeacher = asyncHandler(async (req, res) => {
   });
 });
 
-// ==================== SUBJECT MANAGEMENT ====================
-
-// @desc    Get all subjects (OPTIMIZED)
-// @route   GET /api/admin/subjects
-// @access  Private (Admin)
 export const getAllSubjects = asyncHandler(async (req, res) => {
   const { branch, semester, search } = req.query;
 
@@ -592,9 +540,6 @@ export const getAllSubjects = asyncHandler(async (req, res) => {
   });
 });
 
-// @desc    Get single subject (OPTIMIZED)
-// @route   GET /api/admin/subjects/:id
-// @access  Private (Admin)
 export const getSubjectById = asyncHandler(async (req, res) => {
   const subject = await Subject.findById(req.params.id)
     .populate('teacher', 'name email department')
@@ -610,9 +555,6 @@ export const getSubjectById = asyncHandler(async (req, res) => {
   });
 });
 
-// @desc    Create new subject (OPTIMIZED)
-// @route   POST /api/admin/subjects
-// @access  Private (Admin)
 export const createSubject = asyncHandler(async (req, res) => {
   const { subjectCode, subjectName, branch, semester, teacher } = req.body;
 
@@ -655,9 +597,6 @@ export const createSubject = asyncHandler(async (req, res) => {
   });
 });
 
-// @desc    Update subject (OPTIMIZED)
-// @route   PUT /api/admin/subjects/:id
-// @access  Private (Admin)
 export const updateSubject = asyncHandler(async (req, res) => {
   const { subjectCode, subjectName, branch, semester, teacher } = req.body;
 
@@ -685,9 +624,6 @@ export const updateSubject = asyncHandler(async (req, res) => {
   });
 });
 
-// @desc    Delete subject (OPTIMIZED)
-// @route   DELETE /api/admin/subjects/:id
-// @access  Private (Admin)
 export const deleteSubject = asyncHandler(async (req, res) => {
   const subject = await Subject.findByIdAndUpdate(
     req.params.id,
@@ -706,11 +642,6 @@ export const deleteSubject = asyncHandler(async (req, res) => {
   });
 });
 
-// ==================== DASHBOARD STATS ====================
-
-// @desc    Get admin dashboard statistics (HIGHLY OPTIMIZED)
-// @route   GET /api/admin/dashboard/stats
-// @access  Private (Admin)
 export const getDashboardStats = asyncHandler(async (req, res) => {
   const sevenDaysAgo = new Date();
   sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
@@ -731,7 +662,6 @@ export const getDashboardStats = asyncHandler(async (req, res) => {
     overallAttendanceStats,
     activeSessions,
   ] = await Promise.all([
-    // Student stats
     Student.aggregate([
       { $match: { isActive: true } },
       {
@@ -745,7 +675,6 @@ export const getDashboardStats = asyncHandler(async (req, res) => {
       }
     ]),
 
-    // Teacher stats
     Teacher.aggregate([
       { $match: { isActive: true, isApproved: true } },
       {
@@ -759,7 +688,6 @@ export const getDashboardStats = asyncHandler(async (req, res) => {
       }
     ]),
 
-    // Subject stats
     Subject.aggregate([
       { $match: { isActive: true } },
       {
@@ -773,10 +701,8 @@ export const getDashboardStats = asyncHandler(async (req, res) => {
       }
     ]),
 
-    // Pending approvals
     Teacher.countDocuments({ isApproved: false, isActive: true }),
 
-    // Today's attendance
     Attendance.aggregate([
       { $match: { date: { $gte: today, $lt: tomorrow } } },
       { $unwind: '$periods' },
@@ -791,7 +717,6 @@ export const getDashboardStats = asyncHandler(async (req, res) => {
       }
     ]),
 
-    // Overall attendance
     Attendance.aggregate([
       { $unwind: '$periods' },
       {
@@ -805,7 +730,6 @@ export const getDashboardStats = asyncHandler(async (req, res) => {
       }
     ]),
 
-    // Active sessions
     Schedule.countDocuments({ isActive: true, days: currentDay }),
   ]);
 
@@ -856,9 +780,6 @@ export const getDashboardStats = asyncHandler(async (req, res) => {
   });
 });
 
-// @desc    Get recent activity (OPTIMIZED)
-// @route   GET /api/admin/dashboard/activity
-// @access  Private (Admin)
 export const getRecentActivity = asyncHandler(async (req, res) => {
   const limit = parseInt(req.query.limit) || 10;
 
