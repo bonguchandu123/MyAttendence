@@ -52,6 +52,11 @@ const studentSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
+    // ✅ ADD THIS: FCM Token for push notifications
+    fcmToken: {
+      type: String,
+      default: null,
+    },
     notificationSettings: {
       notifications: {
         type: Boolean,
