@@ -6,19 +6,23 @@ import {
   sendNotificationToMultiple,
   sendNotificationToTopic,
   sendNotificationToClass,
-  // New
+  // Branch-based student loader + selected send
   getStudentsByBranch,
   sendToSelectedStudents,
+  // Teacher-only
   getTeacherClasses,
   teacherSendToClass,
   teacherSendToSelectedStudents,
+  // NEW: Low attendance
+  getLowAttendanceStudents,
+  notifyLowAttendanceStudents,
 } from '../controllers/fcmController.js';
 import { authorize, protect } from '../middlewares/auth.js';
 
 const router = express.Router();
 
 // ─── Token Management (all authenticated users) ───────────────────────────────
-router.put('/token', protect, updateFCMToken);
+router.put('/token',    protect, updateFCMToken);
 router.delete('/token', protect, deleteFCMToken);
 
 // ─── Admin / Teacher: existing send routes ────────────────────────────────────
@@ -29,27 +33,30 @@ router.post('/send-to-class',    protect, authorize('admin', 'teacher'), sendNot
 
 // ─── Admin / Teacher: branch-based student loader + selected send ─────────────
 // GET  /api/fcm/students-by-branch?branch=CSE&semester=3
-//      → returns student list for the branch so frontend can render a checklist
-router.get('/students-by-branch', protect, authorize('admin', 'teacher'), getStudentsByBranch);
+router.get('/students-by-branch',  protect, authorize('admin', 'teacher'), getStudentsByBranch);
+// POST /api/fcm/send-to-selected   { studentIds[], title, body, data? }
+router.post('/send-to-selected',   protect, authorize('admin', 'teacher'), sendToSelectedStudents);
 
-// POST /api/fcm/send-to-selected
-//      Body: { studentIds[], title, body, data? }
-//      → admin sends to a hand-picked list of students
-router.post('/send-to-selected', protect, authorize('admin', 'teacher'), sendToSelectedStudents);
+// ─── NEW: Low attendance routes ───────────────────────────────────────────────
+// GET  /api/fcm/low-attendance?branch=CSE&semester=5&threshold=75
+//      Returns list of students below the threshold, with their low subjects,
+//      reachable flag, etc. – used to populate the checklist UI.
+router.get('/low-attendance',        protect, authorize('admin', 'teacher'), getLowAttendanceStudents);
+
+// POST /api/fcm/low-attendance/notify
+//      Body: { studentIds[], branch, semester, threshold?, title?, body?, usePerStudent? }
+//      Sends push notifications to the selected low-attendance students.
+//      usePerStudent=true  → each student gets a personalised message listing
+//                            their specific low-attendance subjects
+//      usePerStudent=false → single broadcast message to all selected students
+router.post('/low-attendance/notify', protect, authorize('admin', 'teacher'), notifyLowAttendanceStudents);
 
 // ─── Teacher-only: notification routes ───────────────────────────────────────
 // GET  /api/fcm/teacher/my-classes
-//      → returns teacher's classes with studentCount + reachableCount (for dropdown)
-router.get('/teacher/my-classes', protect, authorize('teacher'), getTeacherClasses);
-
-// POST /api/fcm/teacher/send-to-class
-//      Body: { scheduleId, title, body, type?, data? }
-//      → teacher sends to their entire class
-router.post('/teacher/send-to-class', protect, authorize('teacher'), teacherSendToClass);
-
-// POST /api/fcm/teacher/send-to-selected
-//      Body: { scheduleId, studentIds[], title, body, type?, data? }
-//      → teacher sends to specific students from their class
+router.get('/teacher/my-classes',       protect, authorize('teacher'), getTeacherClasses);
+// POST /api/fcm/teacher/send-to-class  { scheduleId, title, body, type?, data? }
+router.post('/teacher/send-to-class',   protect, authorize('teacher'), teacherSendToClass);
+// POST /api/fcm/teacher/send-to-selected { scheduleId, studentIds[], title, body, type?, data? }
 router.post('/teacher/send-to-selected', protect, authorize('teacher'), teacherSendToSelectedStudents);
 
 export default router;

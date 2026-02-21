@@ -4,6 +4,9 @@ import Admin from '../models/Admin.js';
 import Schedule from '../models/Schedule.js';
 import { messaging } from '../config/firebase.js';
 
+import Attendance from '../models/Attendance.js';
+import Subject from '../models/Subject.js';
+
 // @desc    Update FCM Token
 // @route   PUT /api/fcm/token
 // @access  Private (Student/Teacher/Admin)
@@ -845,6 +848,480 @@ export const getTeacherClasses = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Failed to fetch teacher classes',
+      error: error.message,
+    });
+  }
+};
+
+// =====================================================
+// ADD THIS TO fcmController.js
+// NEW: SEND NOTIFICATIONS TO LOW ATTENDANCE STUDENTS
+// =====================================================
+
+/**
+ * @desc    Get low attendance students and optionally send them notifications
+ * @route   GET  /api/fcm/low-attendance?branch=CSE&semester=5&threshold=75
+ *          POST /api/fcm/low-attendance/notify
+ * @access  Private (Admin/Teacher)
+ */
+
+// ─────────────────────────────────────────────────────────────────
+// STEP 1: GET low attendance students (for displaying the checklist)
+// GET /api/fcm/low-attendance?branch=CSE&semester=5&threshold=75
+// ─────────────────────────────────────────────────────────────────
+export const getLowAttendanceStudents = async (req, res) => {
+  try {
+    const { branch, semester, threshold = 75 } = req.query;
+
+    if (!branch || !semester) {
+      return res.status(400).json({
+        success: false,
+        message: 'branch and semester are required',
+      });
+    }
+
+    const thresholdNum = parseInt(threshold);
+
+    // Get all subjects for this branch+semester
+    const subjects = await Subject.find({
+      branch: branch.toUpperCase(),
+      semester: parseInt(semester),
+      isActive: true,
+    }).select('_id subjectCode subjectName').lean();
+
+    if (subjects.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'No subjects found for this branch and semester',
+      });
+    }
+
+    // Get all students in the branch+semester
+    const students = await Student.find({
+      branch: branch.toUpperCase(),
+      semester: parseInt(semester),
+      isActive: true,
+    })
+      .select('_id rollNumber email fcmToken notificationSettings')
+      .sort({ rollNumber: 1 })
+      .lean();
+
+    if (students.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'No students found for this branch and semester',
+      });
+    }
+
+    const studentIds = students.map((s) => s._id);
+    const subjectIds = subjects.map((s) => s._id);
+
+    // Aggregate attendance per student per subject
+    const attendanceData = await Attendance.aggregate([
+      {
+        $match: {
+          student: { $in: studentIds },
+          subject: { $in: subjectIds },
+        },
+      },
+      { $unwind: '$periods' },
+      {
+        $group: {
+          _id: { student: '$student', subject: '$subject' },
+          totalClasses: { $sum: 1 },
+          attendedClasses: {
+            $sum: { $cond: [{ $eq: ['$periods.status', 'present'] }, 1, 0] },
+          },
+        },
+      },
+      {
+        $project: {
+          student: '$_id.student',
+          subject: '$_id.subject',
+          totalClasses: 1,
+          attendedClasses: 1,
+          percentage: {
+            $cond: [
+              { $gt: ['$totalClasses', 0] },
+              {
+                $round: [
+                  {
+                    $multiply: [
+                      { $divide: ['$attendedClasses', '$totalClasses'] },
+                      100,
+                    ],
+                  },
+                  1,
+                ],
+              },
+              0,
+            ],
+          },
+        },
+      },
+      {
+        $match: {
+          percentage: { $lt: thresholdNum },
+          totalClasses: { $gt: 0 },
+        },
+      },
+    ]);
+
+    // Build lookup maps
+    const subjectMap = new Map(subjects.map((s) => [s._id.toString(), s]));
+    const studentMap = new Map(students.map((s) => [s._id.toString(), s]));
+
+    // Group by student → list of low-attendance subjects
+    const studentSubjectMap = new Map();
+
+    attendanceData.forEach((record) => {
+      const studentId = record.student.toString();
+      const subjectId = record.subject.toString();
+      const subject = subjectMap.get(subjectId);
+
+      if (!subject) return;
+
+      if (!studentSubjectMap.has(studentId)) {
+        studentSubjectMap.set(studentId, []);
+      }
+
+      studentSubjectMap.get(studentId).push({
+        subjectId: subjectId,
+        subjectCode: subject.subjectCode,
+        subjectName: subject.subjectName,
+        percentage: record.percentage,
+        attendedClasses: record.attendedClasses,
+        totalClasses: record.totalClasses,
+        // How many more classes needed to reach threshold
+        classesNeeded: Math.max(
+          0,
+          Math.ceil(
+            (thresholdNum * record.totalClasses -
+              100 * record.attendedClasses) /
+              (100 - thresholdNum)
+          )
+        ),
+      });
+    });
+
+    // Build final response list
+    const result = [];
+    studentSubjectMap.forEach((lowSubjects, studentId) => {
+      const student = studentMap.get(studentId);
+      if (!student || lowSubjects.length === 0) return;
+
+      result.push({
+        _id: student._id,
+        rollNumber: student.rollNumber,
+        email: student.email,
+        notificationsEnabled: student.notificationSettings?.notifications ?? false,
+        hasToken: !!student.fcmToken,
+        // reachable = can actually receive push
+        reachable: !!(student.fcmToken && student.notificationSettings?.notifications),
+        lowSubjects,
+        // How many subjects are below threshold
+        lowSubjectCount: lowSubjects.length,
+      });
+    });
+
+    // Sort by rollNumber
+    result.sort((a, b) => a.rollNumber.localeCompare(b.rollNumber));
+
+    res.status(200).json({
+      success: true,
+      count: result.length,
+      branch: branch.toUpperCase(),
+      semester: parseInt(semester),
+      threshold: thresholdNum,
+      data: result,
+    });
+  } catch (error) {
+    console.error('Get Low Attendance Students Error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch low attendance students',
+      error: error.message,
+    });
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────
+// STEP 2: SEND notifications to selected low-attendance students
+// POST /api/fcm/low-attendance/notify
+//
+// Body:
+//   studentIds  – string[]   – IDs of low-attendance students to notify
+//   branch      – string
+//   semester    – number
+//   threshold   – number?    – default 75
+//   title       – string?    – override default title
+//   body        – string?    – override default body
+//   usePerStudent – boolean? – if true, each student gets a personalised
+//                              message listing their specific low subjects
+//
+// Example:
+// {
+//   "studentIds": ["665abc...", "665def..."],
+//   "branch": "CSE",
+//   "semester": 5,
+//   "threshold": 75,
+//   "usePerStudent": true
+// }
+// ─────────────────────────────────────────────────────────────────
+export const notifyLowAttendanceStudents = async (req, res) => {
+  try {
+    const {
+      studentIds,
+      branch,
+      semester,
+      threshold = 75,
+      title: customTitle,
+      body: customBody,
+      usePerStudent = false,
+    } = req.body;
+
+    if (!studentIds || !Array.isArray(studentIds) || studentIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'studentIds must be a non-empty array',
+      });
+    }
+
+    if (!branch || !semester) {
+      return res.status(400).json({
+        success: false,
+        message: 'branch and semester are required',
+      });
+    }
+
+    const thresholdNum = parseInt(threshold);
+
+    // Fetch students with tokens and notifications enabled
+    const students = await Student.find({
+      _id: { $in: studentIds },
+      fcmToken: { $ne: null, $exists: true },
+      'notificationSettings.notifications': true,
+      isActive: true,
+    })
+      .select('_id rollNumber email fcmToken')
+      .lean();
+
+    if (students.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'None of the selected students have notifications enabled or FCM tokens',
+      });
+    }
+
+    // For personalised messages, get per-student attendance data
+    let studentAttendanceMap = new Map();
+
+    if (usePerStudent) {
+      const subjects = await Subject.find({
+        branch: branch.toUpperCase(),
+        semester: parseInt(semester),
+        isActive: true,
+      })
+        .select('_id subjectCode subjectName')
+        .lean();
+
+      const subjectIds = subjects.map((s) => s._id);
+      const subjectMap = new Map(subjects.map((s) => [s._id.toString(), s]));
+      const fetchedStudentIds = students.map((s) => s._id);
+
+      const attendanceData = await Attendance.aggregate([
+        {
+          $match: {
+            student: { $in: fetchedStudentIds },
+            subject: { $in: subjectIds },
+          },
+        },
+        { $unwind: '$periods' },
+        {
+          $group: {
+            _id: { student: '$student', subject: '$subject' },
+            totalClasses: { $sum: 1 },
+            attendedClasses: {
+              $sum: {
+                $cond: [{ $eq: ['$periods.status', 'present'] }, 1, 0],
+              },
+            },
+          },
+        },
+        {
+          $project: {
+            student: '$_id.student',
+            subject: '$_id.subject',
+            totalClasses: 1,
+            attendedClasses: 1,
+            percentage: {
+              $cond: [
+                { $gt: ['$totalClasses', 0] },
+                {
+                  $round: [
+                    {
+                      $multiply: [
+                        { $divide: ['$attendedClasses', '$totalClasses'] },
+                        100,
+                      ],
+                    },
+                    1,
+                  ],
+                },
+                0,
+              ],
+            },
+          },
+        },
+        {
+          $match: {
+            percentage: { $lt: thresholdNum },
+            totalClasses: { $gt: 0 },
+          },
+        },
+      ]);
+
+      // Group by student
+      attendanceData.forEach((record) => {
+        const sid = record.student.toString();
+        const subj = subjectMap.get(record.subject.toString());
+        if (!subj) return;
+
+        if (!studentAttendanceMap.has(sid)) {
+          studentAttendanceMap.set(sid, []);
+        }
+        studentAttendanceMap.get(sid).push({
+          subjectName: subj.subjectName,
+          percentage: record.percentage,
+          classesNeeded: Math.max(
+            0,
+            Math.ceil(
+              (thresholdNum * record.totalClasses -
+                100 * record.attendedClasses) /
+                (100 - thresholdNum)
+            )
+          ),
+        });
+      });
+    }
+
+    // Send notifications
+    const results = [];
+    let successCount = 0;
+    let failureCount = 0;
+
+    if (usePerStudent) {
+      // Individual messages per student
+      for (const student of students) {
+        try {
+          const lowSubjects = studentAttendanceMap.get(student._id.toString()) || [];
+
+          let title = customTitle || '⚠️ Low Attendance Alert';
+          let body = customBody;
+
+          if (!body) {
+            if (lowSubjects.length === 1) {
+              const s = lowSubjects[0];
+              body = `Your ${s.subjectName} attendance is ${s.percentage}%. Attend ${s.classesNeeded} more class${s.classesNeeded === 1 ? '' : 'es'} to reach ${thresholdNum}%.`;
+            } else if (lowSubjects.length > 1) {
+              const subjectList = lowSubjects
+                .map((s) => `${s.subjectName} (${s.percentage}%)`)
+                .join(', ');
+              body = `Your attendance is below ${thresholdNum}% in ${lowSubjects.length} subjects: ${subjectList}. Please attend regularly.`;
+            } else {
+              body = `Your attendance has dropped below ${thresholdNum}%. Please attend classes regularly.`;
+            }
+          }
+
+          const message = {
+            notification: { title, body },
+            data: {
+              type: 'low_attendance',
+              threshold: thresholdNum.toString(),
+              title,
+              message: body,
+              branch: branch.toUpperCase(),
+              semester: semester.toString(),
+            },
+            token: student.fcmToken,
+          };
+
+          await messaging.send(message);
+          successCount++;
+          results.push({
+            studentId: student._id,
+            rollNumber: student.rollNumber,
+            success: true,
+            lowSubjectCount: lowSubjects.length,
+          });
+        } catch (error) {
+          failureCount++;
+          results.push({
+            studentId: student._id,
+            rollNumber: student.rollNumber,
+            success: false,
+            error: error.message,
+          });
+        }
+      }
+    } else {
+      // Bulk multicast with same message
+      const defaultTitle = customTitle || '⚠️ Low Attendance Alert';
+      const defaultBody =
+        customBody ||
+        `Your attendance has dropped below ${thresholdNum}%. Please attend classes regularly to avoid academic issues.`;
+
+      const tokens = students.map((s) => s.fcmToken);
+
+      const message = {
+        notification: { title: defaultTitle, body: defaultBody },
+        data: {
+          type: 'low_attendance',
+          threshold: thresholdNum.toString(),
+          title: defaultTitle,
+          message: defaultBody,
+          branch: branch.toUpperCase(),
+          semester: semester.toString(),
+        },
+        tokens,
+      };
+
+      const response = await messaging.sendEachForMulticast(message);
+      successCount = response.successCount;
+      failureCount = response.failureCount;
+
+      students.forEach((student, idx) => {
+        results.push({
+          studentId: student._id,
+          rollNumber: student.rollNumber,
+          success: response.responses[idx]?.success ?? false,
+          error: response.responses[idx]?.error?.message ?? null,
+        });
+      });
+    }
+
+    console.log(
+      `📢 Low attendance notifications → ${successCount} sent, ${failureCount} failed`
+    );
+
+    res.status(200).json({
+      success: true,
+      message: `Low attendance notifications sent to ${successCount} out of ${students.length} students`,
+      data: {
+        successCount,
+        failureCount,
+        skippedCount: studentIds.length - students.length,
+        totalRequested: studentIds.length,
+        threshold: thresholdNum,
+        usePerStudent,
+        results,
+      },
+    });
+  } catch (error) {
+    console.error('Notify Low Attendance Students Error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to send low attendance notifications',
       error: error.message,
     });
   }
