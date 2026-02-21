@@ -21,6 +21,7 @@ import {
   getAttendanceSummary,
   exportAttendanceCSV,
   exportAttendanceSummaryCSV,
+  getTeacherAttendanceHistory,
 } from '../controllers/attendanceController.js';
 import { protect, authorize, checkTeacherApproval } from '../middlewares/auth.js';
 
@@ -85,5 +86,7 @@ router.get(
   authorize('admin', 'student'),
   getAttendanceByStudent
 );
+
+router.get('/attendance/history', protect, authorize('teacher'), checkTeacherApproval, getTeacherAttendanceHistory);
 
 export default router;

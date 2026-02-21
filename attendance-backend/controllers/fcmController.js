@@ -258,9 +258,19 @@ export const sendNotificationToMultiple = async (req, res) => {
 // @desc    Send notification to topic
 // @route   POST /api/fcm/send-to-topic
 // @access  Private (Admin/Teacher)
+// @desc    Send notification to topic
+// @route   POST /api/fcm/send-to-topic
+// @access  Private (Admin/Teacher)
 export const sendNotificationToTopic = async (req, res) => {
   try {
     const { topic, title, body, data } = req.body;
+
+    console.log('📩 Sending notification to topic:', {
+      topic,
+      title,
+      body,
+      data
+    });
 
     if (!topic || !title || !body) {
       return res.status(400).json({
@@ -269,10 +279,10 @@ export const sendNotificationToTopic = async (req, res) => {
       });
     }
 
-    // Validate and format topic name
-    const formattedTopic = topic.startsWith('/topics/') 
-      ? topic 
-      : `/topics/${topic.replace(/[^a-zA-Z0-9-_.~%]/g, '-')}`;
+    // ✅ FIX: Remove /topics/ prefix - Firebase adds it automatically
+    const formattedTopic = topic.replace(/^\/topics\//, '').replace(/[^a-zA-Z0-9-_.~%]/g, '_');
+
+    console.log('📤 Formatted topic:', formattedTopic);
 
     const message = {
       notification: {
@@ -280,20 +290,23 @@ export const sendNotificationToTopic = async (req, res) => {
         body,
       },
       data: data || {},
-      topic: formattedTopic,
+      topic: formattedTopic, // Just "students", not "/topics/students"
     };
 
     const response = await messaging.send(message);
+
+    console.log('✅ Notification sent successfully:', response);
 
     res.status(200).json({
       success: true,
       message: `Notification sent to topic: ${formattedTopic}`,
       data: {
         messageId: response,
+        topic: formattedTopic
       },
     });
   } catch (error) {
-    console.error('Send Topic Notification Error:', error);
+    console.error('❌ Send Topic Notification Error:', error);
     res.status(500).json({
       success: false,
       message: 'Failed to send topic notification',
@@ -301,13 +314,22 @@ export const sendNotificationToTopic = async (req, res) => {
     });
   }
 };
-
+// @desc    Send notification to class (branch + semester)
+// @route   POST /api/fcm/send-to-class
+// @access  Private (Admin/Teacher)
 // @desc    Send notification to class (branch + semester)
 // @route   POST /api/fcm/send-to-class
 // @access  Private (Admin/Teacher)
 export const sendNotificationToClass = async (req, res) => {
   try {
     const { branch, semester, title, body, data } = req.body;
+
+    console.log('📩 Sending notification to class:', {
+      branch,
+      semester,
+      title,
+      body
+    });
 
     if (!branch || !semester || !title || !body) {
       return res.status(400).json({
@@ -318,11 +340,13 @@ export const sendNotificationToClass = async (req, res) => {
 
     // Find all students in the class with FCM tokens and notifications enabled
     const students = await Student.find({
-      branch,
-      semester,
-      fcmToken: { $ne: null },
+      branch: branch.toUpperCase(),
+      semester: parseInt(semester),
+      fcmToken: { $ne: null, $exists: true },
       'notificationSettings.notifications': true,
     });
+
+    console.log(`📊 Found ${students.length} students with FCM tokens`);
 
     if (students.length === 0) {
       return res.status(404).json({
@@ -331,7 +355,16 @@ export const sendNotificationToClass = async (req, res) => {
       });
     }
 
-    const tokens = students.map(student => student.fcmToken);
+    const tokens = students.map(student => student.fcmToken).filter(token => token);
+
+    console.log(`📤 Sending to ${tokens.length} tokens`);
+
+    if (tokens.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'No valid FCM tokens found',
+      });
+    }
 
     const message = {
       notification: {
@@ -344,6 +377,11 @@ export const sendNotificationToClass = async (req, res) => {
 
     const response = await messaging.sendEachForMulticast(message);
 
+    console.log('✅ Notification sent:', {
+      successCount: response.successCount,
+      failureCount: response.failureCount
+    });
+
     res.status(200).json({
       success: true,
       message: `Notifications sent to ${branch} - Semester ${semester}`,
@@ -354,7 +392,7 @@ export const sendNotificationToClass = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error('Send Class Notification Error:', error);
+    console.error('❌ Send Class Notification Error:', error);
     res.status(500).json({
       success: false,
       message: 'Failed to send class notification',

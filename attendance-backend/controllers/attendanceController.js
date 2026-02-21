@@ -920,6 +920,106 @@ export const getAttendanceSummary = asyncHandler(async (req, res) => {
     },
   });
 });
+// Add this to your backend controllers/teacherController.js
+// This returns attendance sessions with all fields needed for Edit + Report
+
+/**
+ * @desc    Get teacher's attendance history (sessions)
+ * @route   GET /api/teacher/attendance/history
+ * @access  Private (Teacher)
+ */
+export const getTeacherAttendanceHistory = asyncHandler(async (req, res) => {
+  const teacherId = req.user._id;
+
+  // Get all schedules for this teacher
+  const schedules = await Schedule.find({ teacher: teacherId })
+    .populate('subject', 'subjectCode subjectName _id')
+    .lean();
+
+  const scheduleIds = schedules.map(s => s._id);
+
+  // Get attendance records grouped by date + subject
+  const attendanceRecords = await Attendance.aggregate([
+    {
+      $match: { teacher: teacherId }
+    },
+    {
+      $unwind: '$periods'
+    },
+    {
+      $group: {
+        _id: {
+          date: { $dateToString: { format: '%Y-%m-%d', date: '$date' } },
+          subject: '$subject',
+          teacher: '$teacher',
+        },
+        attendanceId: { $first: '$_id' },
+        date: { $first: '$date' },
+        day: { $first: '$day' },
+        periods: { $addToSet: '$periods.periodNumber' },
+        startTime: { $first: '$periods.startTime' },
+        endTime: { $first: '$periods.endTime' },
+        presentCount: {
+          $sum: { $cond: [{ $eq: ['$periods.status', 'present'] }, 1, 0] }
+        },
+        totalStudents: { $sum: 1 },
+      }
+    },
+    {
+      $sort: { date: -1 }
+    }
+  ]);
+
+  // Populate subject details
+  const subjectIds = [...new Set(attendanceRecords.map(r => r._id.subject.toString()))];
+  const subjects = await Subject.find({ _id: { $in: subjectIds } })
+    .select('subjectCode subjectName branch semester')
+    .lean();
+  const subjectMap = new Map(subjects.map(s => [s._id.toString(), s]));
+
+  // Find matching schedule for each record
+  const scheduleMap = new Map();
+  schedules.forEach(s => {
+    const key = s.subject._id.toString();
+    scheduleMap.set(key, s);
+  });
+
+  const sessions = attendanceRecords.map(record => {
+    const subject = subjectMap.get(record._id.subject.toString());
+    const schedule = scheduleMap.get(record._id.subject.toString());
+    const percentage = record.totalStudents > 0
+      ? Math.round((record.presentCount / record.totalStudents) * 100)
+      : 0;
+
+    return {
+      _id: record.attendanceId,
+      scheduleId: schedule?._id ?? '',
+      subjectId: subject?._id ?? '',
+      subjectName: subject?.subjectName ?? '',
+      subjectCode: subject?.subjectCode ?? '',
+      branch: subject?.branch ?? '',
+      semester: subject?.semester ?? '',
+      className: subject ? `${subject.branch} - Sem ${subject.semester}` : '',
+      date: record.date,
+      day: record.day,
+      startTime: record.startTime ?? '',
+      endTime: record.endTime ?? '',
+      time: record.startTime && record.endTime
+        ? `${record.startTime} - ${record.endTime}`
+        : '',
+      periods: record.periods.sort((a, b) => a - b),
+      presentCount: record.presentCount,
+      totalStudents: record.totalStudents,
+      percentage,
+    };
+  });
+
+  res.status(200).json({
+    success: true,
+    count: sessions.length,
+    data: sessions,
+  });
+});
 
 /**
  * @desc    Get all attendance records - OPTIMIZED & FIXED
