@@ -1,13 +1,14 @@
-
 // =====================================================
-// routes/attendanceRoutes.js - Updated with Teacher Routes
+// routes/attendanceRoutes.js
 // =====================================================
 import express from 'express';
 import {
   // Teacher functions (WITH AUTO-NOTIFICATIONS)
   markAttendance,
   sendLowAttendanceAlerts,
-  
+  getTeacherAttendanceHistory,
+  getAttendanceForEdit,
+
   // Admin query functions
   getAllAttendance,
   getAllAttendanceRecords,
@@ -21,8 +22,6 @@ import {
   getAttendanceSummary,
   exportAttendanceCSV,
   exportAttendanceSummaryCSV,
-  getTeacherAttendanceHistory,
-  getAttendanceForEdit,
 } from '../controllers/attendanceController.js';
 import { protect, authorize, checkTeacherApproval } from '../middlewares/auth.js';
 
@@ -32,10 +31,10 @@ const router = express.Router();
 router.use(protect);
 
 // =====================================================
-// TEACHER ROUTES (WITH AUTO-NOTIFICATIONS)
+// TEACHER ROUTES
 // =====================================================
 
-// ✅ Mark attendance - AUTOMATICALLY sends notifications to students
+// Mark attendance — auto sends notifications
 router.post(
   '/mark',
   authorize('teacher', 'admin'),
@@ -43,7 +42,7 @@ router.post(
   markAttendance
 );
 
-// ✅ Send low attendance alerts manually
+// Send low attendance alerts manually
 router.post(
   '/low-attendance-alerts',
   authorize('teacher', 'admin'),
@@ -51,8 +50,24 @@ router.post(
   sendLowAttendanceAlerts
 );
 
+// ✅ Teacher attendance history — MUST be before /:id
+router.get(
+  '/history',
+  authorize('teacher', 'admin'),
+  checkTeacherApproval,
+  getTeacherAttendanceHistory
+);
+
+// ✅ Get existing attendance for editing — MUST be before /:id
+router.get(
+  '/edit/:attendanceId',
+  authorize('teacher', 'admin'),
+  checkTeacherApproval,
+  getAttendanceForEdit
+);
+
 // =====================================================
-// ADMIN ROUTES
+// ADMIN ROUTES — static paths first
 // =====================================================
 
 router.get('/', authorize('admin'), getAllAttendance);
@@ -62,14 +77,10 @@ router.get('/low-attendance', authorize('admin'), getLowAttendanceStudents);
 router.get('/summary', authorize('admin'), getAttendanceSummary);
 router.get('/export/csv', authorize('admin'), exportAttendanceCSV);
 router.get('/export/summary-csv', authorize('admin'), exportAttendanceSummaryCSV);
-router.delete('/:id', authorize('admin'), deleteAttendance);
-router.put('/:id', authorize('admin', 'teacher'), updateAttendance);
-
-// Date-based attendance (admin only)
 router.get('/date/:date', authorize('admin'), getAttendanceByDate);
 
 // =====================================================
-// SHARED ROUTES (Admin and Teacher)
+// SHARED ROUTES (Admin + Teacher)
 // =====================================================
 
 router.get(
@@ -79,7 +90,7 @@ router.get(
 );
 
 // =====================================================
-// SHARED ROUTES (Admin and Student)
+// SHARED ROUTES (Admin + Student)
 // =====================================================
 
 router.get(
@@ -88,7 +99,11 @@ router.get(
   getAttendanceByStudent
 );
 
-router.get('/attendance/history', protect, authorize('teacher'), checkTeacherApproval, getTeacherAttendanceHistory);
-router.get('/attendance/edit/:attendanceId', protect, authorize('teacher'), checkTeacherApproval, getAttendanceForEdit);
+// =====================================================
+// WILDCARD ROUTES — always last
+// =====================================================
+
+router.put('/:id', authorize('admin', 'teacher'), updateAttendance);
+router.delete('/:id', authorize('admin'), deleteAttendance);
 
 export default router;
