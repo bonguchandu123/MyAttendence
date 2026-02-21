@@ -22,6 +22,7 @@ import {
   exportAttendanceCSV,
   exportAttendanceSummaryCSV,
   getTeacherAttendanceHistory,
+  getAttendanceForEdit,
 } from '../controllers/attendanceController.js';
 import { protect, authorize, checkTeacherApproval } from '../middlewares/auth.js';
 
@@ -88,5 +89,6 @@ router.get(
 );
 
 router.get('/attendance/history', protect, authorize('teacher'), checkTeacherApproval, getTeacherAttendanceHistory);
+router.get('/attendance/edit/:attendanceId', protect, authorize('teacher'), checkTeacherApproval, getAttendanceForEdit);
 
 export default router;

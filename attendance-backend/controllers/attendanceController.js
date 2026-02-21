@@ -706,6 +706,95 @@ export const deleteAttendance = asyncHandler(async (req, res) => {
   });
 });
 
+// Add this to your backend controllers/teacherController.js
+
+/**
+ * @desc    Get existing attendance record for editing
+ * @route   GET /api/teacher/attendance/edit/:attendanceId
+ * @access  Private (Teacher)
+ */
+export const getAttendanceForEdit = asyncHandler(async (req, res) => {
+  const { attendanceId } = req.params;
+
+  // Find the attendance record by its _id
+  const attendance = await Attendance.findById(attendanceId)
+    .populate('student', 'rollNumber email _id')
+    .populate('subject', 'subjectCode subjectName _id')
+    .lean();
+
+  if (!attendance) {
+    return res.status(404).json({
+      success: false,
+      message: 'Attendance record not found',
+    });
+  }
+
+  // Get all students in the same branch/semester
+  const students = await Student.find({
+    branch: attendance.branch,
+    semester: attendance.semester,
+    isActive: true,
+  }).select('rollNumber email _id').lean();
+
+  // Also get all attendance records for same date + subject
+  // to build the full student status list
+  const allRecordsForSession = await Attendance.find({
+    subject: attendance.subject._id,
+    date: attendance.date,
+    teacher: attendance.teacher,
+  })
+    .populate('student', 'rollNumber email _id')
+    .lean();
+
+  // Build student status map from existing records
+  const statusMap = new Map();
+  allRecordsForSession.forEach(record => {
+    const studentId = record.student._id.toString();
+    // Get status from periods
+    const latestPeriod = record.periods?.[record.periods.length - 1];
+    statusMap.set(studentId, {
+      studentId: studentId,
+      rollNumber: record.student.rollNumber,
+      email: record.student.email,
+      status: latestPeriod?.status ?? 'absent',
+      periods: record.periods,
+    });
+  });
+
+  // Add any students not yet in the map as absent
+  students.forEach(student => {
+    const id = student._id.toString();
+    if (!statusMap.has(id)) {
+      statusMap.set(id, {
+        studentId: id,
+        rollNumber: student.rollNumber,
+        email: student.email,
+        status: 'absent',
+        periods: [],
+      });
+    }
+  });
+
+  const studentList = Array.from(statusMap.values());
+
+  res.status(200).json({
+    success: true,
+    data: {
+      attendanceId: attendance._id,
+      subject: attendance.subject,
+      date: attendance.date,
+      day: attendance.day,
+      periods: attendance.periods?.map(p => p.periodNumber) ?? [],
+      startTime: attendance.periods?.[0]?.startTime ?? '',
+      endTime: attendance.periods?.[0]?.endTime ?? '',
+      students: studentList,
+    },
+  });
+});
+
+// ADD TO teacherRoutes.js:
+// router.get('/attendance/edit/:attendanceId', protect, authorize('teacher'), checkTeacherApproval, getAttendanceForEdit);
+
 /**
  * @desc    Get low attendance students - HIGHLY OPTIMIZED
  * @route   GET /api/attendance/low-attendance
