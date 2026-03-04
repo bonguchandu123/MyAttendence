@@ -13,4 +13,4 @@ router.post('/submit', protect, submitContactForm);
 // Admin: get all submissions
 router.get('/submissions', protect, authorize('admin'), getContactSubmissions);
 
-export default router;
+export default router
